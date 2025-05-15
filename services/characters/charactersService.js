@@ -88,6 +88,87 @@ class CharacterImages {
       throw error
     }
   }
+
+  async getAllCharacters (characterName, category, pageNumber, pageLimit, user) {
+    try {
+      // Calculate the number of documents to skip
+      const limit = pageLimit || 6
+      const page = pageNumber || 1
+      const skip = (page - 1) * limit
+
+      // Create the query object with user ID and status (if applicable)
+      const query = {
+        user_id: user.id,
+        s3Url: { $exists: true, $ne: [] } // Check that s3Url exists and is not empty
+      }
+      if (category === 'selected') {
+        query.status = 'selected'
+      } else if (category === 'not selected') {
+        query.status = 'not selected'
+      }
+
+      // Add search functionality if a character name is provided
+      if (characterName) {
+        query.name = { $regex: characterName, $options: 'i' }
+      }
+
+      // Fetch the characters with pagination
+      const characters = await Character.find(query)
+        .sort({ updatedAt: -1, _id: -1 })
+        .skip(skip)
+        .limit(limit)
+
+      // Get the current page count of Characters
+      const currentPageCharacterCount = characters.length
+
+      // Optional: Get the total count of characters for pagination info
+      const totalCharacters = await Character.countDocuments(query)
+
+      return {
+        characters,
+        totalCharacters,
+        currentPage: page,
+        totalPages: Math.ceil(totalCharacters / limit),
+        currentPageCharacterCount
+      }
+    } catch (err) {
+      console.log('Error in getAllCharacters function :: ', err)
+      throw new Error(err)
+    }
+  }
+
+  async getCharacterById (id, user) {
+    const characterHistory = []
+
+    try {
+      const ifCharacter = await Character.findOne({ user_id: user.id, _id: id })
+      console.log('Fetching character with id:', id) // Log the id
+      if (ifCharacter) {
+        const character = await Character.findById(id)
+
+        if (!character) {
+          console.error('Character not found with id:', id) // Log when character is not found
+          throw new Error('User does not have access to this character')
+        }
+
+        if (character.imageUrl_history && character.prompt_history) {
+          for (let i = 0; i < character.imageUrl_history.length; i++) {
+            characterHistory.push({
+              image: character.imageUrl_history[i],
+              prompt: character.prompt_history[i]
+            })
+          }
+        }
+        return { character, characterHistory }
+      } else {
+        console.error('User does not have access to this character') // Log when user does not have access to the character
+        throw new Error('User does not have access to this character')
+      }
+    } catch (err) {
+      console.error('Error in getCharacterById function ::', err) // More detailed error logging
+      throw new Error(err)
+    }
+  }
 }
 
 module.exports = new CharacterImages()
