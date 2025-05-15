@@ -19,38 +19,61 @@ class CharacterImages {
       if (!char.name || !char.description) {
         throw new Error('Character validation failed: name and description are required.')
       }
+      character.userId = user.id
+      character.imageUrl = 'Image generation in process......'
+      character.imageUrlStatus = 'processing'
+      await character.save()
+      await this.generateCharacterPrompt(character)
+
+      this.generateCharacterImage(character._id, imageFile)
+
+      return character
+    } catch (err) {
+      console.log('Error in createCharacter function :: ', err)
+      throw new Error(err)
+    }
+  }
+
+  async generateCharacterPrompt (character) {
+    try {
       const completions = await this.openai.chat.completions.create({
         model: 'gpt-4o-mini',
         temperature: 0.7,
         messages: [
           {
             role: 'system',
-            content: 'You are a prompt generator for GPT-Image-1. Your job is to generate detailed visual prompts for Pixar-style full-body caricature illustrations. Your output should be a final prompt describing a character in rich visual detail. Do not include any instructions, explanations, or quotation marks. Do not create realistic or photographic styles — keep the output animated, playful, and whimsical in Pixar style.'
+            content:
+              'You are a prompt generator for GPT-Image-1. Your job is to generate detailed visual prompts for Pixar-style full-body caricature illustrations. Your output should be a final prompt describing a character in rich visual detail. Do not include any instructions, explanations, or quotation marks. Keep the style animated, playful, and whimsical like Pixar. The character’s face must closely resemble the reference image.'
           },
           {
             role: 'user',
-            content: `
+            content: [
+              {
+                type: 'text',
+                text: `
       You are generating a full-body Pixar-style animated character illustration.
       
       Follow these steps:
       
-      **Step 1: Observe and extract features from the reference image**, including hairstyle, face shape, facial expression, skin tone, clothing style, and accessories.
+      **Step 1: Observe and extract facial features from the reference image** — including hairstyle, face shape, eye shape, nose, mouth, eyebrows, expression, and skin tone. The final character’s face should be instantly recognizable as the person in the reference image — just exaggerated in Pixar style.
       
-      **Step 2: Add character depth using the following info:**
+      **Step 2: Use the following personality context for stylization:**
       - Age Group: ${character.age}
       - Description: ${character.description}
       - Gender: ${character.gender}
       
-      **Step 3: Stylize the character with exaggerated, whimsical, and animated Pixar-style charm.**
+      **Step 3: Stylize the character’s outfit and pose to match their personality. Include outfit details, footwear, accessories, and posture. Ensure the pose is a full-body, head-to-toe view, lively and expressive.
       
-      **Step 4: Ensure the final image shows a full-body standing pose — visible from head to toe. Include outfit details, footwear, posture, facial expression, and overall cartoon-like energy.**
-      
-      **Step 5: Use chain-of-thought reasoning to generate the final prompt. First, think step-by-step about the character’s look, personality, and outfit. Then, based on that thought process, write the final prompt.**
-      
-      **Output only the final prompt in a clean, descriptive format. Do not include your reasoning steps, just use them to guide your final output.**
-      
-      Reference Image: ${character.referenceImage}
-          `.trim()
+      **Step 4: Write a rich, single-sentence prompt describing the character visually. Do not include reasoning or steps — just output the final Pixar-style prompt.
+                `.trim()
+              },
+              {
+                type: 'image_url',
+                image_url: {
+                  url: character.referenceImage // Must be a public URL or base64 string
+                }
+              }
+            ]
           }
         ]
       })
@@ -71,17 +94,15 @@ class CharacterImages {
       generatedPrompt += ' --ar 16:9'
       generatedPrompt += ` --Name: ${character.name} --age: ${character.age}`
       character.promptHistory.push(generatedPrompt)
-      character.userId = user.id
       character.imageUrl = 'Image generation in process......'
       character.imageUrlStatus = 'processing'
       await character.save()
-
-      this.generateCharacterImage(character._id, imageFile)
-
-      return character
-    } catch (err) {
-      console.log('Error in createCharacter function :: ', err)
-      throw new Error(err)
+    } catch (error) {
+      console.error('Error generating character image with GPT-Image-1:', error)
+      const characterData = await Character.findById(character._id)
+      characterData.imageUrlStatus = 'failed'
+      await characterData.save()
+      throw error
     }
   }
 
