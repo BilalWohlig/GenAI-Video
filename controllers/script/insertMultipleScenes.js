@@ -2,6 +2,7 @@ const express = require('express')
 const router = express.Router()
 const ScriptService = require('../../services/script/scriptService')
 const validationOfAPI = require('../../middlewares/validation')
+const __constants = require('../../config/constants')
 
 const validationSchema = {
   type: 'object',
@@ -47,15 +48,11 @@ const insertMultipleScenes = async (req, res) => {
     const updatedScript = await ScriptService.insertMultipleScenes(scriptId, scenesToInsert)
 
     res.json({
-      type: 'success',
-      message: 'Scenes inserted successfully',
+      ...__constants.RESPONSE_MESSAGES.SUCCESS,
       data: updatedScript
     })
   } catch (err) {
-    res.status(500).json({
-      type: 'error',
-      err: err.message || 'Internal Server Error'
-    })
+    res.status(500).json({ type: err.type || __constants.RESPONSE_MESSAGES.SERVER_ERROR, err: err.err || err })
   }
 }
 

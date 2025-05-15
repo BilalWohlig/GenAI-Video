@@ -110,11 +110,10 @@ Return the result in this JSON format:
 
       await newScript.save()
 
-      console.log(newScript, 'New Scripttt')
       console.log('Script created successfully.')
       return newScript
     } catch (error) {
-      console.error('❌ Error creating script:', error.message)
+      console.error('Error creating script:', error.message)
       throw error
     }
   }

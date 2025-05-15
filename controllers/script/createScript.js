@@ -28,11 +28,7 @@ const createScript = async (req, res) => {
     res.json({ ...__constants.RESPONSE_MESSAGES.SUCCESS, data: script })
   } catch (err) {
     console.error('Error creating script:', err)
-    res.status(400).json({
-      type: 'CREATE_SCRIPT_FAILED',
-      message: err.message || 'Unexpected error',
-      error: err
-    })
+    res.status(500).json({ type: err.type || __constants.RESPONSE_MESSAGES.SERVER_ERROR, err: err.err || err })
   }
 }
 
