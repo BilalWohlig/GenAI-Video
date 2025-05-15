@@ -1,6 +1,8 @@
 const OpenAI = require('openai')
 const Character = require('../../mongooseSchema/characterSchema')
 const helper = require('../../helper/helper')
+const { default: mongoose } = require('mongoose')
+
 require('dotenv').config()
 
 class CharacterImages {
@@ -11,26 +13,40 @@ class CharacterImages {
   }
 
   // Create a new character
-  async createCharacter (char, user) {
+  async createCharacter (user, char, imageFile) {
     try {
       const character = new Character(char)
       if (!char.name || !char.description) {
         throw new Error('Character validation failed: name and description are required.')
       }
-
       // Generate a prompt using OpenAI
       const completions = await this.openai.chat.completions.create({
         messages: [
           {
             role: 'system',
-            content: 'You are a helpful assistant for creating Midjourney-style prompts to generate Pixar-style animated caricature images. Do not include text or quotation marks in the image. Focus on visual details.'
+            content: 'You are a helpful assistant for creating gpt-image-1 prompts to generate Pixar-style animated caricature images. Do not include text or quotation marks in the image. Focus on visual details.'
           },
           {
             role: 'user',
-            content: `Generate a prompt for a Pixar-style caricature image using only the following details: Name: ${character.name}, Description: ${character.description}, Reference Image: ${character.referenceImage}. The prompt should be clean, natural language, and optimized for image generation. Do not include any text on the image or quotation marks.`
+            content: `
+You are generating a Pixar-style full-body character illustration.
+
+Step 1: Carefully observe the reference image and extract key visual features such as hairstyle, facial shape, expression, attire, and general appearance — all while maintaining a creative and stylized approach.
+
+Step 2: Use the following character info to enhance the visual style and personality:
+- Age Group: ${character.age}
+- Description: ${character.description}
+
+Step 3: Do not recreate the subject photorealistically — instead, reinterpret them as a whimsical Pixar-style animated character.
+
+Step 4: The output should describe a full-body Pixar-style character in a standing pose, entire figure visible from head to toe, with details about outfit, posture, footwear, and overall animated vibe.
+
+Reference Image: ${character.referenceImage}
+`.trim()
           }
         ],
-        model: 'gpt-4o-mini'
+        model: 'gpt-4o-mini',
+        temperature: 0
       })
 
       let generatedPrompt = completions.choices[0].message.content
@@ -44,16 +60,17 @@ class CharacterImages {
       generatedPrompt = generatedPrompt.replace(/^\/+/, '')
 
       if (character.referenceImage) {
-        generatedPrompt += ` --cref ${character.referenceImage}`
+        generatedPrompt += ` --Reference Image: ${character.referenceImage}`
       }
       generatedPrompt += ' --ar 16:9'
+      generatedPrompt += ` --Name: ${character.name} --age: ${character.age}`
       character.promptHistory.push(generatedPrompt)
       character.userId = user.id
       character.imageUrl = 'Image generation in process......'
       character.imageUrlStatus = 'processing'
       await character.save()
 
-      this.generateCharacterImage(character._id, generatedPrompt)
+      this.generateCharacterImage(character._id, imageFile)
 
       return character
     } catch (err) {
@@ -62,16 +79,16 @@ class CharacterImages {
     }
   }
 
-  async generateCharacterImage (charId, prompt) {
+  async generateCharacterImage (charId) {
     try {
       const character = await Character.findById(charId)
-      if (!prompt || typeof prompt !== 'string' || !prompt.trim()) {
+      if (!character.promptHistory[0] || typeof character.promptHistory[0] !== 'string' || !character.promptHistory[0].trim()) {
         throw new Error('Prompt must be a non-empty string.')
       }
 
       const response = await this.openai.images.generate({
         model: 'gpt-image-1',
-        prompt
+        prompt: character.promptHistory[0]
       })
       const imageData = response.data[0].b64_json
       const imageUrl = await helper.saveBase64ImageToGcp(imageData, 'character.png')
@@ -98,20 +115,13 @@ class CharacterImages {
 
       // Create the query object with user ID and status (if applicable)
       const query = {
-        user_id: user.id,
-        s3Url: { $exists: true, $ne: [] } // Check that s3Url exists and is not empty
-      }
-      if (category === 'selected') {
-        query.status = 'selected'
-      } else if (category === 'not selected') {
-        query.status = 'not selected'
+        userId: mongoose.Types.ObjectId(user.id)
       }
 
       // Add search functionality if a character name is provided
       if (characterName) {
         query.name = { $regex: characterName, $options: 'i' }
       }
-
       // Fetch the characters with pagination
       const characters = await Character.find(query)
         .sort({ updatedAt: -1, _id: -1 })
@@ -141,7 +151,7 @@ class CharacterImages {
     const characterHistory = []
 
     try {
-      const ifCharacter = await Character.findOne({ user_id: user.id, _id: id })
+      const ifCharacter = await Character.findOne({ userId: user.id, _id: id })
       console.log('Fetching character with id:', id) // Log the id
       if (ifCharacter) {
         const character = await Character.findById(id)
@@ -167,6 +177,54 @@ class CharacterImages {
     } catch (err) {
       console.error('Error in getCharacterById function ::', err) // More detailed error logging
       throw new Error(err)
+    }
+  }
+
+  async editCharacter (id, body, user) {
+    try {
+      const { newPrompt, userSelectedUrl } = body
+      console.log('Fetching character with id:', id)
+
+      const character = await Character.findOne({ userId: user.id, _id: id })
+
+      if (!character) {
+        console.error('User does not have access to this character')
+        throw new Error('User does not have access to this character')
+      }
+
+      // Build prompt
+      let prompt = newPrompt
+      if (userSelectedUrl != null) {
+        prompt += ` --cref ${userSelectedUrl}`
+      }
+      prompt += ' --ar 16:9'
+
+      // Push to history
+      if (!character.promptHistory) character.promptHistory = []
+      character.promptHistory.push(prompt)
+      await character.save()
+
+      // Generate image with gpt-image-1
+      const response = await this.openai.images.generate({
+        model: 'gpt-image-1',
+        prompt: character.promptHistory[0] // using the first prompt from history
+      })
+
+      const imageData = response.data[0].b64_json
+      const imageUrl = await helper.saveBase64ImageToGcp(imageData, 'character.png')
+
+      character.imageUrl = imageUrl
+      await character.save()
+
+      return imageUrl
+    } catch (err) {
+      if (err.code === 'moderation_blocked') {
+        console.error('Prompt blocked by moderation:', err.message)
+        throw new Error('Prompt rejected due to moderation')
+      }
+
+      console.error('Error in editCharacter function ::', err)
+      throw new Error(err.message || 'Unexpected error occurred')
     }
   }
 }

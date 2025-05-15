@@ -29,6 +29,9 @@ const characterSchema = new Schema({
   promptHistory: {
     type: [String]
   },
+  age: {
+    type: Number
+  },
   status: {
     type: Boolean,
     default: false

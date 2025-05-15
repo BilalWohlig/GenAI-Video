@@ -24,8 +24,10 @@ const validation = (req, res, next) => {
 const createCharacter = async (req, res) => {
   try {
     let referenceImageUrl = null
+    let imageFile
     console.log('>>>>>>>>>>>>', req.file)
     if (req.file && req.file.buffer) {
+      imageFile = req.file
       referenceImageUrl = await helper.uploadImageToGCP(req.file.buffer, req.file.originalname, req.file.mimetype)
     }
 
@@ -34,7 +36,8 @@ const createCharacter = async (req, res) => {
       ...req.body,
       referenceImage: referenceImageUrl // Add the reference image URL to the character data
     }
-    const result = await CharacterImages.createCharacter(characterData, req.user)
+
+    const result = await CharacterImages.createCharacter(req.user, characterData, imageFile)
     // const imageId = result.imageId
     console.log('Character Created: ', result)
     // Socket.IO setup
