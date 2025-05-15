@@ -2,6 +2,7 @@ const express = require('express')
 const router = express.Router()
 const validationOfAPI = require('../../middlewares/validation')
 const ScriptService = require('../../services/script/scriptService')
+const __constants = require('../../config/constants')
 
 const validationSchema = {
   type: 'object',
@@ -27,15 +28,11 @@ const editScriptSceneByIndex = async (req, res) => {
     const updatedScript = await ScriptService.editScriptSceneByIndex(scriptId, sceneIndex, updates)
 
     res.json({
-      type: 'success',
-      message: 'Scene updated successfully',
+      ...__constants.RESPONSE_MESSAGES.SUCCESS,
       data: updatedScript
     })
   } catch (err) {
-    res.status(500).json({
-      type: 'error',
-      err: err.message || 'Internal Server Error'
-    })
+    res.status(500).json({ type: err.type || __constants.RESPONSE_MESSAGES.SERVER_ERROR, err: err.err || err })
   }
 }
 router.put('/editScriptSceneByIndex',
