@@ -15,6 +15,11 @@ const characterSchema = new Schema({
     ref: 'User',
     required: true
   },
+  gender: {
+    type: String,
+    enum: ['Male', 'Female'],
+    default: 'idle'
+  },
   referenceImage: {
     type: String
   },

@@ -19,34 +19,40 @@ class CharacterImages {
       if (!char.name || !char.description) {
         throw new Error('Character validation failed: name and description are required.')
       }
-      // Generate a prompt using OpenAI
       const completions = await this.openai.chat.completions.create({
+        model: 'gpt-4o-mini',
+        temperature: 0.7,
         messages: [
           {
             role: 'system',
-            content: 'You are a helpful assistant for creating gpt-image-1 prompts to generate Pixar-style animated caricature images. Do not include text or quotation marks in the image. Focus on visual details.'
+            content: 'You are a prompt generator for GPT-Image-1. Your job is to generate detailed visual prompts for Pixar-style full-body caricature illustrations. Your output should be a final prompt describing a character in rich visual detail. Do not include any instructions, explanations, or quotation marks. Do not create realistic or photographic styles — keep the output animated, playful, and whimsical in Pixar style.'
           },
           {
             role: 'user',
             content: `
-You are generating a Pixar-style full-body character illustration.
-
-Step 1: Carefully observe the reference image and extract key visual features such as hairstyle, facial shape, expression, attire, and general appearance — all while maintaining a creative and stylized approach.
-
-Step 2: Use the following character info to enhance the visual style and personality:
-- Age Group: ${character.age}
-- Description: ${character.description}
-
-Step 3: Do not recreate the subject photorealistically — instead, reinterpret them as a whimsical Pixar-style animated character.
-
-Step 4: The output should describe a full-body Pixar-style character in a standing pose, entire figure visible from head to toe, with details about outfit, posture, footwear, and overall animated vibe.
-
-Reference Image: ${character.referenceImage}
-`.trim()
+      You are generating a full-body Pixar-style animated character illustration.
+      
+      Follow these steps:
+      
+      **Step 1: Observe and extract features from the reference image**, including hairstyle, face shape, facial expression, skin tone, clothing style, and accessories.
+      
+      **Step 2: Add character depth using the following info:**
+      - Age Group: ${character.age}
+      - Description: ${character.description}
+      - Gender: ${character.gender}
+      
+      **Step 3: Stylize the character with exaggerated, whimsical, and animated Pixar-style charm.**
+      
+      **Step 4: Ensure the final image shows a full-body standing pose — visible from head to toe. Include outfit details, footwear, posture, facial expression, and overall cartoon-like energy.**
+      
+      **Step 5: Use chain-of-thought reasoning to generate the final prompt. First, think step-by-step about the character’s look, personality, and outfit. Then, based on that thought process, write the final prompt.**
+      
+      **Output only the final prompt in a clean, descriptive format. Do not include your reasoning steps, just use them to guide your final output.**
+      
+      Reference Image: ${character.referenceImage}
+          `.trim()
           }
-        ],
-        model: 'gpt-4o-mini',
-        temperature: 0
+        ]
       })
 
       let generatedPrompt = completions.choices[0].message.content
