@@ -3,7 +3,7 @@ const router = express.Router()
 const __constants = require('../../config/constants')
 const validationOfAPI = require('../../middlewares/validation')
 const ScriptService = require('../../services/script/scriptService')
-// const Authentication = require('../../middlewares/auth/authentication')
+const Authentication = require('../../middlewares/auth/authentication')
 
 const validationSchema = {
   type: 'object',
@@ -18,7 +18,8 @@ const validation = (req, res, next) => {
 const getScriptById = async (req, res) => {
   try {
     const { id } = req.params
-    const script = await ScriptService.getScriptById(id)
+    const script = await ScriptService.getScriptById(id, req.user)
+
     if (!script) {
       return res.json({ type: __constants.RESPONSE_MESSAGES.NOT_FOUND, err: 'Script not found' })
     }
@@ -30,7 +31,7 @@ const getScriptById = async (req, res) => {
 }
 
 router.get('/getScriptById/:id',
-  // Authentication.authenticate('jwt', { session: false }),
+  Authentication.authenticate('jwt', { session: false }),
   validation,
   getScriptById
 )

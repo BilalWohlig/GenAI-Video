@@ -100,6 +100,7 @@ Return the result in this JSON format:
       }
 
       const newScript = new Script({
+        userId: user._id,
         characterId: characterIds,
         title,
         topic,
@@ -122,10 +123,10 @@ Return the result in this JSON format:
     try {
       const query = {}
 
-      //   // Optional: Filter scripts created by a specific user
-      //   if (userId) {
-      //     query.userId = userId
-      //   }
+      // Optional: Filter scripts created by a specific user
+      if (userId) {
+        query.userId = userId
+      }
 
       const skip = (page - 1) * limit
 
@@ -151,7 +152,7 @@ Return the result in this JSON format:
     }
   }
 
-  async getScriptById (scriptId) {
+  async getScriptById (scriptId, user) {
     try {
       if (!scriptId || typeof scriptId !== 'string') {
         throw new Error('Invalid scriptId')
@@ -162,6 +163,9 @@ Return the result in this JSON format:
       if (!script) {
         throw new Error('Script not found')
       }
+      if (!script.userId || script.userId.toString() !== user._id.toString()) {
+        throw new Error('Unauthorized: You do not own this script')
+      }
 
       return script
     } catch (error) {
@@ -170,7 +174,7 @@ Return the result in this JSON format:
     }
   }
 
-  async editScriptSceneByIndex (scriptId, sceneIndex, updates) {
+  async editScriptSceneByIndex (scriptId, sceneIndex, updates, user) {
     try {
       if (!scriptId) throw new Error('scriptId is required')
       if (sceneIndex === undefined || sceneIndex < 0) throw new Error('Valid sceneIndex is required')
@@ -178,6 +182,9 @@ Return the result in this JSON format:
 
       const scriptDoc = await Script.findById(scriptId)
       if (!scriptDoc) throw new Error('Script not found')
+      if (!scriptDoc.userId || scriptDoc.userId.toString() !== user._id.toString()) {
+        throw new Error('Unauthorized: You do not own this script')
+      }
       if (!scriptDoc.script || sceneIndex >= scriptDoc.script.length) {
         throw new Error('Scene index is out of bounds')
       }
@@ -206,7 +213,7 @@ Return the result in this JSON format:
     }
   }
 
-  async insertMultipleScenes (scriptId, scenesToInsert) {
+  async insertMultipleScenes (scriptId, scenesToInsert, user) {
     try {
       if (!scriptId) throw new Error('scriptId is required')
       if (!Array.isArray(scenesToInsert) || scenesToInsert.length === 0) {
@@ -215,6 +222,11 @@ Return the result in this JSON format:
 
       const scriptDoc = await Script.findById(scriptId)
       if (!scriptDoc) throw new Error('Script not found')
+
+      // Ownership check: only allow if script.userId matches logged-in user
+      if (!scriptDoc.userId || scriptDoc.userId.toString() !== user._id.toString()) {
+        throw new Error('Unauthorized: You do not own this script')
+      }
 
       if (!Array.isArray(scriptDoc.script)) {
         throw new Error('Script scenes not initialized properly')
