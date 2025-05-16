@@ -3,7 +3,7 @@ const router = express.Router()
 const __constants = require('../../config/constants')
 const validationOfAPI = require('../../middlewares/validation')
 const ScriptService = require('../../services/script/scriptService')
-// const Authentication = require('../../middlewares/auth/authentication')
+const Authentication = require('../../middlewares/auth/authentication')
 
 const validationSchema = {
   type: 'object',
@@ -20,7 +20,7 @@ const getAllScripts = async (req, res) => {
     const page = parseInt(req.query.page) || 1
     const limit = parseInt(req.query.limit) || 15
     // const { userId } = req.body
-    const result = await ScriptService.getAllScripts({ page, limit })
+    const result = await ScriptService.getAllScripts({ userId: req.user._id, page, limit })
     res.json({
       ...__constants.RESPONSE_MESSAGES.SUCCESS,
       data: result.scripts,
@@ -36,7 +36,7 @@ const getAllScripts = async (req, res) => {
 }
 
 router.post('/getAllScripts',
-  // Authentication.authenticate('jwt', { session: false }),
+  Authentication.authenticate('jwt', { session: false }),
   validation, getAllScripts)
 
 module.exports = router

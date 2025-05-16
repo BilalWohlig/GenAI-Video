@@ -3,6 +3,7 @@ const router = express.Router()
 const ScriptService = require('../../services/script/scriptService')
 const validationOfAPI = require('../../middlewares/validation')
 const __constants = require('../../config/constants')
+const Authentication = require('../../middlewares/auth/authentication')
 
 const validationSchema = {
   type: 'object',
@@ -45,7 +46,7 @@ const insertMultipleScenes = async (req, res) => {
       })
     }
 
-    const updatedScript = await ScriptService.insertMultipleScenes(scriptId, scenesToInsert)
+    const updatedScript = await ScriptService.insertMultipleScenes(scriptId, scenesToInsert, req.user)
 
     res.json({
       ...__constants.RESPONSE_MESSAGES.SUCCESS,
@@ -56,6 +57,7 @@ const insertMultipleScenes = async (req, res) => {
   }
 }
 
-router.put('/insertMultipleScenes', validation, insertMultipleScenes)
+router.put('/insertMultipleScenes', validation,
+  Authentication.authenticate('jwt', { session: false }), insertMultipleScenes)
 
 module.exports = router

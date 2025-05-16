@@ -3,7 +3,7 @@ const router = express.Router()
 const ScriptService = require('../../services/script/scriptService')
 const __constants = require('../../config/constants')
 const validationOfAPI = require('../../middlewares/validation')
-// const Authentication = require('../../middlewares/auth/authentication')
+const Authentication = require('../../middlewares/auth/authentication')
 
 const validationSchema = {
   type: 'object',
@@ -33,7 +33,7 @@ const createScript = async (req, res) => {
 }
 
 router.post('/createScript',
-  // Authentication.authenticate('jwt', { session: false }),
+  Authentication.authenticate('jwt', { session: false }),
   validation,
   createScript
 )
