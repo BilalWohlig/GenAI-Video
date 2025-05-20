@@ -1,6 +1,6 @@
 const express = require('express')
 const router = express.Router()
-const ScriptService = require('../../services/script/scriptService')
+const DemoService = require('../../services/demo/demoService')
 const __constants = require('../../config/constants')
 const validationOfAPI = require('../../middlewares/validation')
 const Authentication = require('../../middlewares/auth/authentication')
@@ -24,7 +24,7 @@ const validation = (req, res, next) =>
 
 const createScript = async (req, res) => {
   try {
-    const script = await ScriptService.createScript(req.body, req.user)
+    const script = await DemoService.createScript(req.body, req.user)
     res.json({ ...__constants.RESPONSE_MESSAGES.SUCCESS, data: script })
   } catch (err) {
     console.error('Error creating script:', err)
