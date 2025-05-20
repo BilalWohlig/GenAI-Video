@@ -124,9 +124,12 @@ class ScriptService {
         topic,
         numberOfScenes: totalScenes,
         token_count: completion.usage?.total_tokens,
-        script: parsedScript
+        script: parsedScript.map(scene => ({
+          ...scene,
+          imageUrl: '',
+          videoUrl: ''
+        }))
       })
-
       await newScript.save()
 
       console.log('Script created successfully.')
