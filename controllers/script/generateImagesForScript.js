@@ -1,15 +1,15 @@
 const express = require('express')
 const router = express.Router()
-const DemoService = require('../../services/demo/demoService')
+const ScriptService = require('../../services/script/scriptService')
 const __constants = require('../../config/constants')
 const validationOfAPI = require('../../middlewares/validation')
-// const Authentication = require('../../middlewares/auth/authentication')
 
 const validationSchema = {
   type: 'object',
   required: ['scriptId'],
   properties: {
-    scriptId: { type: 'string' }
+    scriptId: { type: 'string' },
+    sceneIdx: { type: 'number' } // optional
   }
 }
 
@@ -18,7 +18,8 @@ const validation = (req, res, next) =>
 
 const generateScriptImages = async (req, res) => {
   try {
-    const result = await DemoService.generateImagesForScript(req.body.scriptId)
+    const { scriptId, sceneIdx } = req.body
+    const result = await ScriptService.generateImagesForScript(scriptId, sceneIdx)
     res.json({ ...__constants.RESPONSE_MESSAGES.SUCCESS, data: result })
   } catch (err) {
     console.error('Error generating images:', err)

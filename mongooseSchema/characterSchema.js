@@ -17,8 +17,8 @@ const characterSchema = new Schema({
   },
   gender: {
     type: String,
-    enum: ['Male', 'Female'],
-    default: 'idle'
+    enum: ['Male', 'Female']
+    // default: 'idle'
   },
   referenceImage: {
     type: String

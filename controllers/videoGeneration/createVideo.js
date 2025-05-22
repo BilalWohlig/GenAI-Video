@@ -27,7 +27,8 @@ const handleError = (err, res) => {
 const createVideo = async (req, res) => {
   try {
     const data = await videoGenerationService.createVideo(
-      req.body.scriptId
+      req.body.scriptId,
+      req.body.sceneIndex
     )
     res.json({ ...__constants.RESPONSE_MESSAGES.SUCCESS, data: data })
   } catch (err) {

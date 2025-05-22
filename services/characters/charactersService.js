@@ -58,13 +58,12 @@ class CharacterImages {
       **Step 1: Observe and extract facial features from the reference image** — including hairstyle, face shape, eye shape, nose, mouth, eyebrows, expression, and skin tone. The final character’s face should be instantly recognizable as the person in the reference image — just exaggerated in Pixar style.
       
       **Step 2: Use the following personality context for stylization:**
-      - Age Group: ${character.age}
       - Description: ${character.description}
       - Gender: ${character.gender}
       
       **Step 3: Stylize the character’s outfit and pose to match their personality. Include outfit details, footwear, accessories, and posture. Ensure the pose is a full-body, head-to-toe view, lively and expressive.
       
-      **Step 4: Write a rich, single-sentence prompt describing the character visually. Do not include reasoning or steps — just output the final Pixar-style prompt.
+      **Step 4: Write a rich, single-sentence prompt describing the character visually. Do not include reasoning or steps — just output the final Pixar-style prompt. Do not include any names or text in the image.
                 `.trim()
               },
               {
@@ -92,7 +91,7 @@ class CharacterImages {
         generatedPrompt += ` --Reference Image: ${character.referenceImage}`
       }
       generatedPrompt += ' --ar 16:9'
-      generatedPrompt += ` --Name: ${character.name} --age: ${character.age}`
+      generatedPrompt += ` --Name: ${character.name}`
       character.promptHistory.push(generatedPrompt)
       character.imageUrl = 'Image generation in process......'
       character.imageUrlStatus = 'processing'

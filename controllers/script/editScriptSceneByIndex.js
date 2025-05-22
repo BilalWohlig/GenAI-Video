@@ -3,7 +3,7 @@ const router = express.Router()
 const validationOfAPI = require('../../middlewares/validation')
 const ScriptService = require('../../services/script/scriptService')
 const __constants = require('../../config/constants')
-const Authentication = require('../../middlewares/auth/authentication')
+// const Authentication = require('../../middlewares/auth/authentication')
 
 const validationSchema = {
   type: 'object',
@@ -26,7 +26,7 @@ const editScriptSceneByIndex = async (req, res) => {
       })
     }
 
-    const updatedScript = await ScriptService.editScriptSceneByIndex(scriptId, sceneIndex, updates, req.user)
+    const updatedScript = await ScriptService.editScriptSceneByIndex(scriptId, sceneIndex, updates)
 
     res.json({
       ...__constants.RESPONSE_MESSAGES.SUCCESS,
@@ -38,7 +38,7 @@ const editScriptSceneByIndex = async (req, res) => {
 }
 router.put('/editScriptSceneByIndex',
   validation,
-  Authentication.authenticate('jwt', { session: false }),
+  // Authentication.authenticate('jwt', { session: false }),
   editScriptSceneByIndex
 )
 

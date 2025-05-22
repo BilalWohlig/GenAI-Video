@@ -3,6 +3,7 @@ const path = require('path')
 const fetch = require('node-fetch')
 const { v4: uuidv4 } = require('uuid')
 require('dotenv').config()
+const helper = require('../../helper/helper')
 
 const OpenAI = require('openai')
 const { toFile } = OpenAI
@@ -227,13 +228,13 @@ class ScriptService {
               })
 
               const imageBase64 = rsp.data[0].b64_json
-              const imageBuffer = Buffer.from(imageBase64, 'base64')
+              const imageUrl = await helper.saveBase64ImageToGcp(imageBase64, 'scene.png')
               const fileName = `${scriptId}_scene${sceneIndex}.png`
               const filePath = path.join(GENERATED_DIR, fileName)
-              fs.writeFileSync(filePath, imageBuffer)
+              fs.writeFileSync(filePath, imageUrl)
 
-              console.log(`📁 Scene ${sceneIndex} image saved: ${filePath}`)
-              return `/generated/${fileName}`
+              console.log(`📁 Scene ${sceneIndex} image saved: ${imageUrl}`)
+              return imageUrl
             } catch (err) {
               console.error(`❌ Scene ${sceneIndex} image edit failed:`, err.message)
               return null
