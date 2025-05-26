@@ -7,6 +7,8 @@ const dotenv = require('dotenv')
 dotenv.config()
 const ImageKit = require('imagekit')
 const path = require('path')
+const { toFile } = require('openai')
+const { Readable } = require('stream')
 const imagekit = new ImageKit({
   publicKey: process.env.IMAGE_KIT_PUBLIC_KEY,
   privateKey: process.env.IMAGE_KIT_PRIVATE_KEY,
@@ -75,6 +77,20 @@ class Helper {
     } catch (error) {
       console.error('❌ Error saving base64 image:', error)
       throw error
+    }
+  }
+
+  async fetchRemoteImageAsFile (url) {
+    try {
+      const response = await axios.get(url, { responseType: 'arraybuffer' })
+      const stream = Readable.from(response.data)
+      const filename = url.split('/').pop().split('?')[0] || 'image.png'
+
+      return await toFile(stream, filename, {
+        type: 'image/png'
+      })
+    } catch (error) {
+      throw new Error(`Failed to fetch remote image: ${url} - ${error.message}`)
     }
   }
 }

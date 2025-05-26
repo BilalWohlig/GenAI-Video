@@ -1,4 +1,3 @@
-
 const express = require('express')
 const router = express.Router()
 const __constants = require('../../config/constants')
@@ -8,17 +7,17 @@ const Authentication = require('../../middlewares/auth/authentication')
 
 const validationSchema = {
   type: 'object',
-  required: ['scriptId'
-  ],
+  required: ['prompt', 'image'],
   properties: {
-    scriptId: { type: 'string' }
-
+    prompt: { type: 'string' },
+    image: { type: 'string', format: 'uri' }
   }
 }
 
 const validation = (req, res, next) => {
   return validationOfAPI(req, res, next, validationSchema, 'body')
 }
+
 const handleError = (err, res) => {
   console.log('Error:', err)
   res.status(400).json({ type: err.type || __constants.RESPONSE_MESSAGES.SERVER_ERROR, err: err.message || err })
@@ -26,15 +25,16 @@ const handleError = (err, res) => {
 
 const createVideo = async (req, res) => {
   try {
-    const data = await videoGenerationService.createVideo(
-      req.body.scriptId,
-      req.body.sceneIndex
-    )
-    res.json({ ...__constants.RESPONSE_MESSAGES.SUCCESS, data: data })
+    const data = await videoGenerationService.generateImageToVideo({
+      prompt: req.body.prompt,
+      image: req.body.image
+    })
+    res.json({ ...__constants.RESPONSE_MESSAGES.SUCCESS, data })
   } catch (err) {
     handleError(err, res)
   }
 }
+
 router.post(
   '/createVideo',
   Authentication.authenticate('jwt', { session: false }),

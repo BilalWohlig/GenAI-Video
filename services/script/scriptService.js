@@ -323,7 +323,8 @@ class ScriptService {
       if (!script) {
         throw new Error('Script not found')
       }
-      if (!script.userId || script.userId.toString() !== user._id.toString()) {
+
+      if (!script.userId || script.userId.toString() !== user.id.toString()) {
         throw new Error('Unauthorized: You do not own this script')
       }
 

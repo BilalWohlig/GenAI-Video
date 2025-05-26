@@ -15,7 +15,7 @@ const scriptSchema = new Schema(
     }],
     title: {
       type: String,
-      required: true
+      required: false
     },
     topic: {
       type: String,
@@ -23,18 +23,15 @@ const scriptSchema = new Schema(
     },
     numberOfScenes: {
       type: Number,
-      required: true,
-      min: 1
+      default: 15
     },
     status: {
       type: String,
       enum: ['draft', 'final'],
       default: 'draft'
-      // required: true
     },
     token_count: {
       type: Number
-      // required: true
     },
     script: {
       type: [Object],

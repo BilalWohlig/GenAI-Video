@@ -17,16 +17,22 @@ const validation = (req, res, next) => {
 
 const getScriptById = async (req, res) => {
   try {
-    const { id } = req.params
-    const script = await ScriptService.getScriptById(id, req.user)
+    console.log('Authenticated user:', req.user)
+    const { id: scriptId } = req.params
+    const user = req.user
 
-    if (!script) {
-      return res.json({ type: __constants.RESPONSE_MESSAGES.NOT_FOUND, err: 'Script not found' })
-    }
-    res.json({ ...__constants.RESPONSE_MESSAGES.SUCCESS, data: script })
+    const script = await ScriptService.getScriptById(scriptId, user)
+
+    return res.json({
+      ...__constants.RESPONSE_MESSAGES.SUCCESS,
+      data: script
+    })
   } catch (err) {
-    console.log('getModelById Error', err)
-    return res.json({ type: err.type || __constants.RESPONSE_MESSAGES.SERVER_ERROR, err: err.err || err })
+    console.error('getScriptById Error', err)
+    return res.json({
+      type: err.type || __constants.RESPONSE_MESSAGES.SERVER_ERROR,
+      err: err.err || err
+    })
   }
 }
 

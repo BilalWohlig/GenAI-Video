@@ -6,6 +6,9 @@ const mime = require('mime-types') // for guessing content type
 const replicate = new Replicate({
   auth: process.env.REPLICATE_API_TOKEN
 })
+const fetch = require('node-fetch')
+const API_KEY = process.env.KLING_JWT_TOKEN
+console.log('API_KEY:', API_KEY)
 
 class UserDesignService {
   async createVideo (scriptId, sceneIndex) {
@@ -104,6 +107,33 @@ class UserDesignService {
       console.error('❌ Error in getVideo:', err)
       throw new Error(err)
     }
+  }
+
+  async generateImageToVideo ({ prompt, image }) {
+    const response = await fetch('https://api.klingai.com/v1/videos/image2video', {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${API_KEY}`,
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({
+        model_name: 'kling-v2-master',
+        mode: 'pro',
+        duration: '10',
+        image,
+        prompt,
+        cfg_scale: 0.5
+      })
+    })
+
+    if (!response.ok) {
+      const error = await response.text()
+      throw new Error(`Request failed: ${response.status} - ${error}`)
+    }
+
+    const result = await response.json()
+    console.log('Video generation response:', result)
+    return result
   }
 }
 
