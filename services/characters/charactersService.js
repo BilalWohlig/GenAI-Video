@@ -171,11 +171,11 @@ ${characterListText}
       })
 
       // 3. Start background character image generation (async)
-      this.generateCharacterImagesInBatch(savedCharacters.map(c => c._id))
+      this.generateCharacterImages(savedCharacters.map(c => c._id))
         .then(() => {
           console.log('[mainGenerateStory] Character images generated')
           // 4. After characters done, generate scene images
-          return this.generateSceneImagesWithGptImage1(newScript._id)
+          return this.generateSceneImages(newScript._id)
             .then(async () => {
               console.log('[mainGenerateStory] Scene image generation done')
 
@@ -223,11 +223,11 @@ ${characterListText}
     }
   }
 
-  async generateCharacterImagesInBatch (characterIds) {
+  async generateCharacterImages (characterIds) {
     const MAX_RETRIES = 2
 
     try {
-      console.log('[generateCharacterImagesInBatch] Starting batch image generation for:', characterIds)
+      console.log('[generateCharacterImages] Starting batch image generation for:', characterIds)
 
       const characters = await Character.find({ _id: { $in: characterIds } })
 
@@ -235,7 +235,7 @@ ${characterListText}
         characters.map(async (char) => {
           const prompt = char.promptHistory[0]
           if (!prompt) {
-            console.warn(`[generateCharacterImagesInBatch] No prompt for character ${char._id}, skipping`)
+            console.warn(`[generateCharacterImages] No prompt for character ${char._id}, skipping`)
             return
           }
 
@@ -244,7 +244,7 @@ ${characterListText}
 
           while (attempt <= MAX_RETRIES && !imageBase64) {
             try {
-              console.log(`[generateCharacterImagesInBatch] (${attempt + 1}/${MAX_RETRIES + 1}) Generating image for ${char.name}`)
+              console.log(`[generateCharacterImages] (${attempt + 1}/${MAX_RETRIES + 1}) Generating image for ${char.name}`)
 
               const result = await this.openai.images.generate({
                 model: 'gpt-image-1',
@@ -254,17 +254,17 @@ ${characterListText}
               imageBase64 = result.data[0]?.b64_json
 
               if (!imageBase64) {
-                console.warn(`[generateCharacterImagesInBatch] No image data returned for ${char.name} on attempt ${attempt + 1}`)
+                console.warn(`[generateCharacterImages] No image data returned for ${char.name} on attempt ${attempt + 1}`)
               }
             } catch (err) {
-              console.error(`[generateCharacterImagesInBatch] Error on attempt ${attempt + 1} for ${char.name}:`, err.message)
+              console.error(`[generateCharacterImages] Error on attempt ${attempt + 1} for ${char.name}:`, err.message)
             }
 
             attempt++
           }
 
           if (!imageBase64) {
-            console.error(`[generateCharacterImagesInBatch] Failed to generate image for ${char.name} after ${MAX_RETRIES + 1} attempts`)
+            console.error(`[generateCharacterImages] Failed to generate image for ${char.name} after ${MAX_RETRIES + 1} attempts`)
             return
           }
 
@@ -273,23 +273,23 @@ ${characterListText}
             const imageUrl = await helper.saveBase64ImageToGcp(imageBase64, filename)
 
             if (!imageUrl) {
-              console.error(`[generateCharacterImagesInBatch] Failed to upload image for ${char.name}`)
+              console.error(`[generateCharacterImages] Failed to upload image for ${char.name}`)
               return
             }
 
             char.imageUrl = imageUrl
             await char.save()
 
-            console.log(`[generateCharacterImagesInBatch] Image saved for ${char.name}: ${imageUrl}`)
+            console.log(`[generateCharacterImages] Image saved for ${char.name}: ${imageUrl}`)
           } catch (uploadErr) {
-            console.error(`[generateCharacterImagesInBatch] Upload error for ${char.name}:`, uploadErr.message)
+            console.error(`[generateCharacterImages] Upload error for ${char.name}:`, uploadErr.message)
           }
         })
       )
 
-      console.log('[generateCharacterImagesInBatch] All character image generation tasks complete.')
+      console.log('[generateCharacterImages] All character image generation tasks complete.')
     } catch (err) {
-      console.error('[generateCharacterImagesInBatch] Fatal error in batch processing:', err.message)
+      console.error('[generateCharacterImages] Fatal error in batch processing:', err.message)
     }
   }
 
@@ -325,7 +325,7 @@ ${characterListText}
     }
   }
 
-  async generateSceneImagesWithGptImage1 (scriptId, sceneIdx = null) {
+  async generateSceneImages (scriptId, sceneIdx = null) {
     try {
       console.log(`🔍 Generating scene images for script ID: ${scriptId}`)
       const scriptDoc = await Script.findById(scriptId)
@@ -432,7 +432,7 @@ ${characterListText}
 
       console.log(`✅ Completed scene image generation for script ID: ${scriptId}`)
     } catch (error) {
-      console.error('❌ generateSceneImagesWithGptImage1 error:', error.message)
+      console.error('❌ generateSceneImages error:', error.message)
     }
   }
 
