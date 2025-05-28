@@ -2,13 +2,13 @@ const helper = require('../../helper/helper')
 const scriptSchema = require('../../mongooseSchema/scriptSchema')
 const Replicate = require('replicate')
 const axios = require('axios')
-const mime = require('mime-types') // for guessing content type
+const mime = require('mime-types')
+
 const replicate = new Replicate({
   auth: process.env.REPLICATE_API_TOKEN
 })
 const fetch = require('node-fetch')
 const API_KEY = process.env.KLING_JWT_TOKEN
-console.log('API_KEY:', API_KEY)
 
 class UserDesignService {
   async createVideo (scriptId, sceneIndex) {

@@ -11,11 +11,14 @@ const client = new OpenAI()
 const fs = require('fs')
 const path = require('path')
 const { v4: uuidv4 } = require('uuid')
-const fetch = require('node-fetch')
-
+const scriptSchema = require('../../mongooseSchema/scriptSchema')
+const Replicate = require('replicate')
+const mime = require('mime-types')
 const GENERATED_DIR = path.resolve(__dirname, '../../generated')
 const TEMP_DIR = path.resolve(__dirname, '../../temp')
-const API_KEY = process.env.KLING_ACCESS_KEY
+const replicate = new Replicate({
+  auth: process.env.REPLICATE_API_TOKEN
+})
 
 class CharacterImages {
   constructor () {
@@ -48,7 +51,7 @@ Given the story topic below, do two things:
 - If the story includes important unnamed characters (like a father, guardian, teacher, etc.), assign a suitable single-word name yourself.
 - Put all extra details in the description field.
 - Each prompt MUST begin exactly with: "A full body 3D Pixar-animated style of <character name>" — replacing <character name> with the actual name.
-
+- Make sure all prompts are safe, socially acceptable, non-violent, non-sexual, non-sensitive, and will not trigger content moderation systems.
 Output a JSON array of objects, each object containing:
 - "name": character's single-word name
 - "description": short character description (can have multiple words)
@@ -119,10 +122,12 @@ ${characterListText}
 - Generate a multi-scene story with a clear beginning, middle, and end.
 - Each scene must include:
   - "narration": The narrator’s line for the scene.
-  - "textToImagePrompt": A vivid visual description starting with "A full body 3D Pixar-animated style of..." followed by the main characters in that scene and their surroundings.
+- "textToImagePrompt": A vivid visual description starting with "A full body 3D Pixar-animated style of..." followed by the main characters in that scene and their surroundings. The image must be in landscape format (16:9 aspect ratio), with a clear background setting and dynamic character poses.
   - "imageToVideoPrompt": A short, descriptive prompt to animate the scene.
   - "imageUrl": ""  (empty string)
   - "videoUrl": ""  (empty string)
+
+- Make sure all prompts are safe, socially acceptable, non-violent, non-sexual, non-sensitive, and will not trigger content ]moderation systems.
 
 - Scenes must include at least one character, so the prompt always references one or more characters.
   - Scenes should include a mix of:
@@ -148,23 +153,60 @@ ${characterListText}
 
       console.log({ userId, topic, characterIds: savedCharacters.map(c => c._id) })
 
-      // Save script in DB with userId, topic, characters and scenes
+      // ✅ Normalize scenes before saving
+      const updatedScenes = scenes.map(scene => ({
+        narration: scene.narration,
+        textToImagePrompt: scene.textToImagePrompt,
+        imageToVideoPrompt: scene.imageToVideoPrompt || scene.textToImagePrompt,
+        imageUrl: '', // placeholder
+        videoUrl: '' // placeholder
+      }))
+
+      // ✅ Save to MongoDB with normalized scenes
       const newScript = await Script.create({
         userId,
         characterId: savedCharacters.map(c => c._id),
         topic,
-        script: scenes
+        script: updatedScenes
       })
 
       // 3. Start background character image generation (async)
-      this.generateCharacterImagesIndividually(savedCharacters.map(c => c._id))
+      this.generateCharacterImagesInBatch(savedCharacters.map(c => c._id))
         .then(() => {
           console.log('[mainGenerateStory] Character images generated')
           // 4. After characters done, generate scene images
           return this.generateSceneImagesWithGptImage1(newScript._id)
+            .then(async () => {
+              console.log('[mainGenerateStory] Scene image generation done')
+
+              // 🎥 Now generate videos for each scene asynchronously
+              const freshScript = await Script.findById(newScript._id)
+              if (!freshScript) throw new Error('Script not found for video generation')
+
+              const videoPromises = freshScript.script.map((scene, index) => {
+                if (scene.imageUrl && scene.imageToVideoPrompt) {
+                  return this.createVideo(freshScript._id, index)
+                    .then(res => console.log(`🎬 [Scene ${index}] Video generation started`, res))
+                    .catch(err => console.error(`🔥 [Scene ${index}] Video generation failed`, err.message))
+                } else {
+                  console.warn(`⚠️ [Scene ${index}] Missing imageUrl or imageToVideoPrompt, skipping`)
+                  return Promise.resolve()
+                }
+              })
+
+              await Promise.allSettled(videoPromises)
+              console.log('[mainGenerateStory] All videos triggered')
+
+              return {
+                characters: characterDataForScript,
+                script: {
+                  id: freshScript._id,
+                  topic: freshScript.topic,
+                  scenes: freshScript.script
+                }
+              }
+            })
         })
-        .then(() => console.log('[mainGenerateStory] Scene image generation done'))
-        .catch(err => console.error('[mainGenerateStory] Background generation error:', err))
 
       // 5. Return characters and script immediately (images null for now)
       return {
@@ -181,71 +223,73 @@ ${characterListText}
     }
   }
 
-  async generateCharacterImagesIndividually (characterIds) {
+  async generateCharacterImagesInBatch (characterIds) {
     const MAX_RETRIES = 2
+
     try {
-      console.log('[generateCharacterImagesIndividually] Starting batch image generation for:', characterIds)
+      console.log('[generateCharacterImagesInBatch] Starting batch image generation for:', characterIds)
 
       const characters = await Character.find({ _id: { $in: characterIds } })
 
-      for (const char of characters) {
-        const prompt = char.promptHistory[0]
-        if (!prompt) {
-          console.warn(`[generateCharacterImagesIndividually] No prompt for character ${char._id}, skipping`)
-          continue
-        }
+      await Promise.allSettled(
+        characters.map(async (char) => {
+          const prompt = char.promptHistory[0]
+          if (!prompt) {
+            console.warn(`[generateCharacterImagesInBatch] No prompt for character ${char._id}, skipping`)
+            return
+          }
 
-        let imageBase64 = null
-        let attempt = 0
+          let imageBase64 = null
+          let attempt = 0
 
-        while (attempt <= MAX_RETRIES && !imageBase64) {
-          try {
-            console.log(`[generateCharacterImagesIndividually] (${attempt + 1}/${MAX_RETRIES + 1}) Generating image for ${char.name}`)
+          while (attempt <= MAX_RETRIES && !imageBase64) {
+            try {
+              console.log(`[generateCharacterImagesInBatch] (${attempt + 1}/${MAX_RETRIES + 1}) Generating image for ${char.name}`)
 
-            const result = await this.openai.images.generate({
-              model: 'gpt-image-1',
-              prompt
-            })
+              const result = await this.openai.images.generate({
+                model: 'gpt-image-1',
+                prompt
+              })
 
-            imageBase64 = result.data[0]?.b64_json
+              imageBase64 = result.data[0]?.b64_json
 
-            if (!imageBase64) {
-              console.warn(`[generateCharacterImagesIndividually] No image data returned for ${char.name} on attempt ${attempt + 1}`)
+              if (!imageBase64) {
+                console.warn(`[generateCharacterImagesInBatch] No image data returned for ${char.name} on attempt ${attempt + 1}`)
+              }
+            } catch (err) {
+              console.error(`[generateCharacterImagesInBatch] Error on attempt ${attempt + 1} for ${char.name}:`, err.message)
             }
-          } catch (err) {
-            console.error(`[generateCharacterImagesIndividually] Error on attempt ${attempt + 1} for ${char.name}:`, err.message)
+
+            attempt++
           }
 
-          attempt++
-        }
-
-        if (!imageBase64) {
-          console.error(`[generateCharacterImagesIndividually] Failed to generate image for ${char.name} after ${MAX_RETRIES + 1} attempts`)
-          continue
-        }
-
-        // Upload to GCP
-        try {
-          const filename = `${char._id}.png`
-          const imageUrl = await helper.saveBase64ImageToGcp(imageBase64, filename)
-
-          if (!imageUrl) {
-            console.error(`[generateCharacterImagesIndividually] Failed to upload image for ${char.name}`)
-            continue
+          if (!imageBase64) {
+            console.error(`[generateCharacterImagesInBatch] Failed to generate image for ${char.name} after ${MAX_RETRIES + 1} attempts`)
+            return
           }
 
-          char.imageUrl = imageUrl
-          await char.save()
+          try {
+            const filename = `${char._id}.png`
+            const imageUrl = await helper.saveBase64ImageToGcp(imageBase64, filename)
 
-          console.log(`[generateCharacterImagesIndividually] Image saved for ${char.name}: ${imageUrl}`)
-        } catch (uploadErr) {
-          console.error(`[generateCharacterImagesIndividually] Upload error for ${char.name}:`, uploadErr.message)
-        }
-      }
+            if (!imageUrl) {
+              console.error(`[generateCharacterImagesInBatch] Failed to upload image for ${char.name}`)
+              return
+            }
 
-      console.log('[generateCharacterImagesIndividually] All character image generation tasks complete.')
+            char.imageUrl = imageUrl
+            await char.save()
+
+            console.log(`[generateCharacterImagesInBatch] Image saved for ${char.name}: ${imageUrl}`)
+          } catch (uploadErr) {
+            console.error(`[generateCharacterImagesInBatch] Upload error for ${char.name}:`, uploadErr.message)
+          }
+        })
+      )
+
+      console.log('[generateCharacterImagesInBatch] All character image generation tasks complete.')
     } catch (err) {
-      console.error('[generateCharacterImagesIndividually] Fatal error in batch processing:', err.message)
+      console.error('[generateCharacterImagesInBatch] Fatal error in batch processing:', err.message)
     }
   }
 
@@ -296,7 +340,6 @@ ${characterListText}
         console.warn('⚠️ No characters found for image references')
       }
 
-      // Map character name (lowercase) => OpenAI file object (downloaded from imageUrl)
       const charFileMap = new Map()
       for (const char of characters) {
         const charName = (char.name || char.characterName || 'unnamed').toLowerCase()
@@ -339,17 +382,15 @@ ${characterListText}
 
               let rsp
               if (matchedCharFiles.length > 0) {
-              // Use first matched character image as reference with no mask
                 rsp = await client.images.edit({
                   model: 'gpt-image-1',
                   image: matchedCharFiles[0],
-                  prompt: scene.textToImagePrompt
+                  prompt: `${scene.textToImagePrompt}, landscape format, 16:9 aspect ratio`
                 })
               } else {
-              // Pure text generation
                 rsp = await client.images.generate({
                   model: 'gpt-image-1',
-                  prompt: scene.textToImagePrompt
+                  prompt: `${scene.textToImagePrompt}, landscape format, 16:9 aspect ratio`
                 })
               }
 
@@ -395,31 +436,101 @@ ${characterListText}
     }
   }
 
-  async generateImageToVideo () {
-    const response = await fetch('https://api.klingai.com/v1/videos/image2video', {
-      method: 'POST',
-      headers: {
-        Authorization: `Bearer ${API_KEY}`,
-        'Content-Type': 'application/json'
-      },
-      body: JSON.stringify({
-        model_name: 'kling-v2-master',
-        mode: 'pro',
-        duration: '10',
-        image: 'https://h2.inkwai.com/bs2/upload-ylab-stunt/se/ai_portal_queue_mmu_image_upscale_aiweb/3214b798-e1b4-4b00-b7af-72b5b0417420_raw_image_0.jpg',
-        prompt: 'The astronaut stood up and walked away',
-        cfg_scale: 0.5
-      })
-    })
+  async createVideo (scriptId, sceneIndex) {
+    try {
+      console.log('🎬 createVideo called with scriptId:', scriptId, 'sceneIndex:', sceneIndex)
 
-    if (!response.ok) {
-      const error = await response.text()
-      throw new Error(`Request failed: ${response.status} - ${error}`)
+      const scriptDoc = await scriptSchema.findById(scriptId)
+      if (!scriptDoc) throw new Error('Script not found')
+
+      const scene = scriptDoc.script[sceneIndex]
+      if (!scene) throw new Error(`Scene at index ${sceneIndex} not found`)
+
+      if (!scene.imageToVideoPrompt || !scene.imageUrl) {
+        throw new Error('Scene is missing imageToVideoPrompt or imageUrl')
+      }
+
+      const obj = {
+        name: `${scriptId}_scene${sceneIndex}.mp4`,
+        prompt: scene.imageToVideoPrompt,
+        imageUrl: scene.imageUrl
+      }
+
+      // Respond immediately
+      setImmediate(async () => {
+        try {
+          console.log('⚙️ [Background] Starting generateVideoFromImage with:', obj)
+          const videoUrl = await this.generateVideoFromImage(obj)
+          console.log('✅ [Background] Video generated. URL:', videoUrl)
+
+          // 🔄 Atomic update
+          const updateResult = await scriptSchema.updateOne(
+            { _id: scriptId },
+            { $set: { [`script.${sceneIndex}.videoUrl`]: videoUrl } }
+          )
+
+          if (updateResult.modifiedCount === 0) {
+            console.warn(`⚠️ [Background] Scene ${sceneIndex} not updated. It might have been deleted or modified.`)
+          } else {
+            console.log('💾 [Background] Script updated with videoUrl.')
+          }
+        } catch (bgErr) {
+          console.error('🔥 [Background] Error during video generation:', bgErr.message)
+        }
+      })
+
+      return { status: 'processing', message: 'Video generation started in background' }
+    } catch (err) {
+      console.error('❌ Error in createVideo:', err)
+      throw new Error(err.message || 'Failed to create video')
+    }
+  }
+
+  async generateVideoFromImage (options) {
+    const MAX_RETRIES = 2
+    let attempt = 0
+    let finalUrl = null
+
+    while (attempt <= MAX_RETRIES && !finalUrl) {
+      try {
+        console.log(`🚧 Attempt ${attempt + 1}/${MAX_RETRIES + 1} - generateVideoFromImage with:`, options)
+
+        const input = {
+          prompt: options.prompt,
+          duration: 10,
+          cfg_scale: 0.5,
+          start_image: options.imageUrl,
+          aspect_ratio: '16:9',
+          negative_prompt: ''
+        }
+
+        console.log('📤 Sending input to Replicate:', input)
+        console.time('⏱️ VideoGenerationTimer')
+        const output = await replicate.run('kwaivgi/kling-v1.6-pro', { input })
+        console.timeEnd('⏱️ VideoGenerationTimer')
+
+        const replicateVideoUrl = output.url().href
+        console.log('🎞️ Replicate video URL:', replicateVideoUrl)
+
+        const res = await axios.get(replicateVideoUrl, { responseType: 'arraybuffer' })
+        const fileBuffer = res.data
+        const mimeType = mime.lookup(replicateVideoUrl) || 'video/mp4'
+
+        finalUrl = await helper.uploadImageToGCP(fileBuffer, options.name, mimeType)
+
+        console.log('✅ Final ImageKit video URL:', finalUrl)
+      } catch (error) {
+        console.error(`🔥 Error in generateVideoFromImage (attempt ${attempt + 1}):`, error.response?.data || error.message)
+      }
+
+      attempt++
     }
 
-    const result = await response.json()
-    console.log('Video generation response:', result)
-    return result
+    if (!finalUrl) {
+      throw new Error(`Failed to generate video after ${MAX_RETRIES + 1} attempts`)
+    }
+
+    return finalUrl
   }
 
   async getAllCharacters (characterName, category, pageNumber, pageLimit, user) {
