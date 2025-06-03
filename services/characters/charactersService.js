@@ -1,7 +1,6 @@
 const OpenAI = require('openai')
 const Character = require('../../mongooseSchema/characterSchema')
 const helper = require('../../helper/helper')
-const { default: mongoose } = require('mongoose')
 const Script = require('../../mongooseSchema/scriptSchema')
 require('dotenv').config()
 const { toFile } = require('openai')
@@ -16,10 +15,14 @@ const Replicate = require('replicate')
 const mime = require('mime-types')
 const GENERATED_DIR = path.resolve(__dirname, '../../generated')
 const TEMP_DIR = path.resolve(__dirname, '../../temp')
+const { execSync, spawnSync } = require('node:child_process')
+const { access } = require('node:fs/promises')
+const sh = (cmd) => execSync(cmd, { stdio: ['ignore', 'pipe', 'inherit'] }).toString().trim()
 const replicate = new Replicate({
   auth: process.env.REPLICATE_API_TOKEN
 })
-
+const apiKey = process.env.ELEVENLABS_API_KEY
+const baseURL = 'https://api.elevenlabs.io/v1'
 class CharacterImages {
   constructor () {
     this.openai = new OpenAI({
@@ -48,18 +51,22 @@ Given the story topic below, do two things:
 **IMPORTANT:**
 - The character's name must be a single word only (e.g., "Sammy").
 - Do NOT include any articles, titles, or descriptive phrases in the name.
-- If the story includes important unnamed characters (like a father, guardian, teacher, etc.), assign a suitable single-word name yourself.
-- Put all extra details in the description field.
-- Each prompt MUST begin exactly with: "A full body 3D Pixar-animated style of <character name>" — replacing <character name> with the actual name.
-- Make sure all prompts are safe, socially acceptable, non-violent, non-sexual, non-sensitive, and will not trigger content moderation systems.
-Output a JSON array of objects, each object containing:
-- "name": character's single-word name
-- "description": short character description (can have multiple words)
-- "prompt": a single-sentence prompt that starts with "A full body 3D Pixar-animated style of <character name>" and vividly describes the character in playful, animated detail.
-
+- If the story includes important unnamed characters (like a father, guardian, teacher, etc.), assign them a fictional single-word name.
+- Use only safe, respectful, and family-friendly language in names and descriptions.
+- Each character’s prompt MUST begin exactly with: “A full body 3D Pixar-animated style of <character name>”
+- The visual prompt should describe the character in a fun, cinematic setting. Use playful and colorful language — describe the character’s appearance, outfit, mood, background environment, lighting, and camera framing.
+- Ensure that the generated image is **landscape (16:9)** and visually engaging, without violence, sensitivity, or controversial themes.
+- Avoid any references to race, skin tone, or real-world likeness. Focus on outfits, mood, colors, accessories, and personality.
+- The size of the image should be **at least 621x621 pixels**.
+- The image should not be squared or have a height/width ratio of 4:3.
+Output a JSON array of character objects, each containing:
+- "name": A single-word character name.
+- "description": A short phrase describing the character’s role or traits.
+- “prompt”: A single-sentence description that begins with “A full body 3D Pixar-animated style of ”, vividly portraying the character with playful, animated details. The image should be in landscape orientation with a 16:9 aspect ratio, capturing the character in a lively, cinematic scene.
 Story topic:
+
 "${topic}"
-      `.trim()
+  `.trim()
       }
 
       const characterResponse = await this.openai.chat.completions.create({
@@ -69,17 +76,22 @@ Story topic:
       })
 
       const rawCharacters = characterResponse.choices[0].message.content.trim()
+      console.log('[mainGenerateStory] Raw character response:', rawCharacters)
+
       const cleanedCharacters = rawCharacters.replace(/```json|```/g, '').trim()
       let characters = JSON.parse(cleanedCharacters)
 
-      // Filter valid characters
-      characters = characters.filter(c =>
-        c.name && typeof c.name === 'string' && !c.name.includes(' ') &&
-      c.description && typeof c.description === 'string' &&
-      c.prompt && typeof c.prompt === 'string'
+      characters = characters.filter(
+        c =>
+          c.name &&
+        typeof c.name === 'string' &&
+        !c.name.includes(' ') &&
+        c.description &&
+        typeof c.description === 'string' &&
+        c.prompt &&
+        typeof c.prompt === 'string'
       )
 
-      // Save characters to DB with imageUrl: null
       const savedCharacters = await Character.insertMany(
         characters.map(c => ({
           userId,
@@ -91,7 +103,6 @@ Story topic:
         }))
       )
 
-      // Prepare for script generation: map saved characters with DB ids
       const characterDataForScript = savedCharacters.map(c => ({
         id: c._id,
         name: c.name,
@@ -100,45 +111,61 @@ Story topic:
         imageUrl: null
       }))
 
-      // 2. Generate script with characters (imageUrl and videoUrl empty)
+      // 2. Generate script with characters
       const scriptSystemMsg = {
         role: 'system',
         content: 'You are a scriptwriting AI that creates detailed, animated story scripts for short videos.'
       }
 
-      const characterListText = characterDataForScript.map(c => `${c.name} (${c.description})`).join(', ')
+      const characterListText = characterDataForScript
+        .map(c => `${c.name} (${c.description})`)
+        .join(', ')
 
       const scriptUserMsg = {
         role: 'user',
         content: `
-Create a story script based on the following topic and characters.
+Create a Pixar-style animated story script based on the topic and characters below.
 
 **Topic:** ${topic}
 
 **Characters:**
 ${characterListText}
 
-**Instructions:**
-- Generate a multi-scene story with a clear beginning, middle, and end.
-- Each scene must include:
-  - "narration": The narrator’s line for the scene.
-- "textToImagePrompt": A vivid visual description starting with "A full body 3D Pixar-animated style of..." followed by the main characters in that scene and their surroundings. The image must be in landscape format (16:9 aspect ratio), with a clear background setting and dynamic character poses.
-  - "imageToVideoPrompt": A short, descriptive prompt to animate the scene.
-  - "imageUrl": ""  (empty string)
-  - "videoUrl": ""  (empty string)
+Guidelines for the video script:
 
-- Make sure all prompts are safe, socially acceptable, non-violent, non-sexual, non-sensitive, and will not trigger content ]moderation systems.
+- The story should last 1 to 2 minutes in runtime, and have **exactly 15 scenes**.
+- Each scene must feel like a natural continuation of the previous one, creating a cohesive narrative arc.
+- The story should be heartwarming, playful, imaginative, and safe for all audiences.
+- Do NOT use any violent, controversial, sensitive, or real-world topics.
+- The environment and tone must stay true to a **3D Pixar-animated style** — colorful, whimsical, cinematic.
 
-- Scenes must include at least one character, so the prompt always references one or more characters.
-  - Scenes should include a mix of:
-    - Solo scenes: featuring one character.
-    - Pair scenes: featuring two characters interacting.
-    - Group scenes: featuring three or more characters.
-  - Maintain consistent character appearances and attributes across all scenes.
-  - Each scene’s narration and prompts should be concise but rich in visual storytelling.
-  - Use creative, coherent transitions between scenes to ensure narrative flow.
-  - Respond with a JSON array of exactly 15 scenes.
-      `.trim()
+Each scene object should include:
+
+1. **"narration"** – 1 sentence (5–7 seconds worth). It should describe the emotional moment or key action in the scene, connecting smoothly with the prior one.
+2. **"textToImagePrompt"** – Starts with "3D Pixar animated style," followed by a rich, detailed, and imaginative description of the scene. It should mention the characters in action, environment, props, lighting, mood, and framing. Ensure landscape 16:9 framing. No sensitive or unsafe content.
+3. **"imageToVideoPrompt"** – Starts with "3D Pixar animated video of", followed by a short animation instruction (e.g., “slow zoom while the character smiles and waves”). Keep camera and gesture movements smooth, light, and visually stable.
+4. **"imageUrl"** – Leave empty.
+5. **"videoUrl"** – Leave empty.
+
+Strictly avoid:
+- Photorealistic language.
+- Excessive movement (no jumping, running, dancing).
+- Mentioning brands, real places, or famous people.
+- Depictions that may be interpreted as offensive or culturally sensitive.
+
+Example output format:
+
+[
+  {
+    "narration": "Each scene narration should be a single line of text and should not exceed 5–7 seconds in duration.",
+    "textToImagePrompt": "Prompt to generate image.",
+    "imageToVideoPrompt": "Prompt to generate video.",
+    "imageUrl": "",
+    "videoUrl": ""
+  },
+  ...
+]
+  `.trim()
       }
 
       const scriptResponse = await this.openai.chat.completions.create({
@@ -147,68 +174,90 @@ ${characterListText}
         messages: [scriptSystemMsg, scriptUserMsg]
       })
 
+      const extractFirstJsonArray = (text) => {
+        try {
+          const match = text.match(/\[\s*{[\s\S]*}\s*]/)
+          if (!match) throw new Error('No JSON array found in response')
+          return JSON.parse(match[0])
+        } catch (err) {
+          console.error('[mainGenerateStory] Failed to extract JSON array. Raw text:\n', text)
+          throw err
+        }
+      }
+
       const rawScript = scriptResponse.choices[0].message.content.trim()
-      const cleanedScript = rawScript.replace(/```json|```/g, '').trim()
-      const scenes = JSON.parse(cleanedScript)
+      console.log('[mainGenerateStory] Raw script output:', rawScript)
 
-      console.log({ userId, topic, characterIds: savedCharacters.map(c => c._id) })
+      const scenes = extractFirstJsonArray(rawScript)
 
-      // ✅ Normalize scenes before saving
       const updatedScenes = scenes.map(scene => ({
         narration: scene.narration,
         textToImagePrompt: scene.textToImagePrompt,
         imageToVideoPrompt: scene.imageToVideoPrompt || scene.textToImagePrompt,
-        imageUrl: '', // placeholder
-        videoUrl: '' // placeholder
+        imageUrl: '',
+        videoUrl: ''
       }))
 
-      // ✅ Save to MongoDB with normalized scenes
       const newScript = await Script.create({
         userId,
         characterId: savedCharacters.map(c => c._id),
         topic,
         script: updatedScenes
       })
-
-      // 3. Start background character image generation (async)
+      // Trigger character image generation, then scene images, then videos
       this.generateCharacterImages(savedCharacters.map(c => c._id))
         .then(() => {
           console.log('[mainGenerateStory] Character images generated')
-          // 4. After characters done, generate scene images
           return this.generateSceneImages(newScript._id)
-            .then(async () => {
-              console.log('[mainGenerateStory] Scene image generation done')
+        })
+        .then(async () => {
+          console.log('[mainGenerateStory] Scene images generated')
 
-              // 🎥 Now generate videos for each scene asynchronously
-              const freshScript = await Script.findById(newScript._id)
-              if (!freshScript) throw new Error('Script not found for video generation')
+          const freshScript = await Script.findById(newScript._id)
+          if (!freshScript) throw new Error('Script not found for video generation')
 
-              const videoPromises = freshScript.script.map((scene, index) => {
-                if (scene.imageUrl && scene.imageToVideoPrompt) {
-                  return this.createVideo(freshScript._id, index)
-                    .then(res => console.log(`🎬 [Scene ${index}] Video generation started`, res))
-                    .catch(err => console.error(`🔥 [Scene ${index}] Video generation failed`, err.message))
-                } else {
-                  console.warn(`⚠️ [Scene ${index}] Missing imageUrl or imageToVideoPrompt, skipping`)
-                  return Promise.resolve()
-                }
-              })
-
-              await Promise.allSettled(videoPromises)
-              console.log('[mainGenerateStory] All videos triggered')
-
-              return {
-                characters: characterDataForScript,
-                script: {
-                  id: freshScript._id,
-                  topic: freshScript.topic,
-                  scenes: freshScript.script
-                }
+          const videoResults = await Promise.allSettled(
+            freshScript.script.map((scene, index) => {
+              if (scene.imageUrl && scene.imageToVideoPrompt) {
+                return this.generateVideoFromImage({
+                  imageUrl: scene.imageUrl,
+                  prompt: scene.imageToVideoPrompt,
+                  name: `scene${index}.mp4`
+                })
+                  .then(url => {
+                    freshScript.script[index].videoUrl = url
+                    return true
+                  })
+                  .catch(err => {
+                    console.error(`🔥 [Scene ${index}] Video generation failed:`, err.message)
+                    return false
+                  })
+              } else {
+                console.warn(`⚠️ [Scene ${index}] Missing imageUrl or prompt, skipping`)
+                return Promise.resolve(false)
               }
             })
+          )
+
+          await freshScript.save()
+
+          const allSuccessful = videoResults.every(r => r.status === 'fulfilled' && r.value === true)
+
+          if (allSuccessful) {
+            console.log('in heree', freshScript.script.length)
+            await this.trimAndMux({ totalClips: freshScript.script.length })
+            console.log('[mainGenerateStory] trimAndMux completed successfully')
+
+            // ✅ Narration processing after successful video generation
+            await this.processNarrations(freshScript.script, topic, userId)
+          } else {
+            console.warn('[mainGenerateStory] Skipping trimAndMux due to video generation failures')
+          }
+        })
+        .catch(err => {
+          console.error('[mainGenerateStory] Background generation error:', err.message)
         })
 
-      // 5. Return characters and script immediately (images null for now)
       return {
         characters: characterDataForScript,
         script: {
@@ -223,25 +272,168 @@ ${characterListText}
     }
   }
 
+  // Separate processNarrations function outside, bound to class context:
+  async processNarrations (scenes, topic, userId) {
+  // Step 1: Save narration file and get its path
+    const narrationFilePath = await this.saveNarrationsToFile(scenes, topic, userId)
+
+    // Step 2: Convert narration file to audio using the saved file path
+    const audioFiles = await this.convertNarrationFileToAudioInBulk(narrationFilePath)
+
+    return audioFiles
+  }
+
+  async convertNarrationFileToAudioInBulk (narrationFilePath) {
+    if (!apiKey) throw new Error('API key is required')
+    if (!baseURL) throw new Error('baseURL is required')
+
+    // Prepare Audios folder
+    const audiosFolder = path.join(process.cwd(), 'Audios')
+    if (!fs.existsSync(audiosFolder)) {
+      fs.mkdirSync(audiosFolder)
+    }
+
+    const axiosInstance = axios.create({
+      baseURL,
+      headers: {
+        Accept: 'audio/mpeg',
+        'Content-Type': 'application/json',
+        'xi-api-key': apiKey
+      },
+      timeout: 30000
+    })
+
+    try {
+      const defaultModel = 'eleven_multilingual_v2'
+      const defaultVoiceSettings = {
+        stability: 0.5,
+        similarity_boost: 0.8,
+        style: 0.0,
+        use_speaker_boost: true
+      }
+
+      const fileContent = await fs.promises.readFile(narrationFilePath, 'utf-8')
+      const lines = fileContent.split('\n').map(line => line.trim()).filter(line => line.length > 0)
+
+      if (lines.length === 0) throw new Error('Narration file is empty')
+
+      const voiceIds = [
+        'EXAVITQu4vr4xnSDxMaL', // Sarah
+        'AZnzlk1XvdvUeBnXmlld', // Domi
+        'aXbjk4JoIDXdCNz29TrS', // Sunny
+        'onwK4e9ZLuTAKqWW03F9' // Daniel
+      ]
+      const selectedVoiceId = voiceIds[Math.floor(Math.random() * voiceIds.length)]
+
+      const generatedAudioInfo = []
+
+      for (let i = 0; i < lines.length; i++) {
+        const line = lines[i]
+        const requestBody = {
+          text: line,
+          modelId: defaultModel,
+          voiceSettings: { ...defaultVoiceSettings }
+        }
+
+        const response = await axiosInstance.post(
+        `/text-to-speech/${selectedVoiceId}`,
+        requestBody,
+        { responseType: 'arraybuffer' }
+        )
+
+        if (response.status !== 200) {
+          throw new Error(`TTS API failed with status ${response.status}`)
+        }
+
+        const filename = `audio${i + 1}.mp3`
+        const outputPath = path.join(audiosFolder, filename)
+
+        await fs.promises.writeFile(outputPath, Buffer.from(response.data))
+        console.log(`🔊 Saved line ${i + 1} audio to: ${outputPath}`)
+
+        generatedAudioInfo.push({ filename, path: outputPath })
+      }
+
+      return generatedAudioInfo
+    } catch (err) {
+      console.error('❌ Error in convertNarrationFileToAudioInBulk:', err)
+      throw err
+    }
+  }
+
+  async saveNarrationsToFile (scenes) {
+    try {
+      const fileName = `narration_${uuidv4()}.txt`
+      const filePath = path.join(__dirname, 'narrations', fileName)
+
+      const narrationsText = scenes.map(s => s.narration).join('\n')
+
+      // Ensure directory exists
+      fs.mkdirSync(path.dirname(filePath), { recursive: true })
+
+      // Write file
+      fs.writeFileSync(filePath, narrationsText, 'utf8')
+      console.log(`[Narration File] Saved to ${filePath}`)
+
+      return filePath
+    } catch (err) {
+      console.error('[saveNarrationsToFile] Failed to save narrations:', err)
+    }
+  }
+
+  async refineCharacterPromptWithGpt (originalPrompt) {
+    try {
+      const chatResponse = await this.openai.chat.completions.create({
+        model: 'gpt-4o',
+        messages: [
+          {
+            role: 'system',
+            content: 'You are a helpful assistant that rewrites image generation prompts to make them safe, child-appropriate, and compliant with OpenAI’s safety guidelines while preserving the visual intent.'
+          },
+          {
+            role: 'user',
+            content: `Rephrase this prompt to be safer and still effective for image generation:\n\n"${originalPrompt}"`
+          }
+        ],
+        temperature: 0.7
+      })
+
+      const refined = chatResponse.choices?.[0]?.message?.content?.trim()
+      if (!refined) {
+        console.warn('[refinePromptWithGpt] No response from GPT.')
+        return null
+      }
+
+      console.log('[refinePromptWithGpt] Refined prompt:', refined)
+      return refined
+    } catch (err) {
+      console.error('[refinePromptWithGpt] Failed to get refined prompt:', err.message)
+      return null
+    }
+  }
+
   async generateCharacterImages (characterIds) {
     const MAX_RETRIES = 2
 
     try {
-      console.log('[generateCharacterImages] Starting batch image generation for:', characterIds)
+      console.log('[generateCharacterImages] Starting character image generation for:', characterIds)
 
       const characters = await Character.find({ _id: { $in: characterIds } })
+      const validCharacters = characters.filter(c => c.promptHistory?.[0])
+
+      if (validCharacters.length === 0) {
+        console.warn('[generateCharacterImages] No valid characters with prompts.')
+        return
+      }
 
       await Promise.allSettled(
-        characters.map(async (char) => {
-          const prompt = char.promptHistory[0]
-          if (!prompt) {
-            console.warn(`[generateCharacterImages] No prompt for character ${char._id}, skipping`)
-            return
-          }
-
+        validCharacters.map(async (char) => {
+          let prompt = char.promptHistory[0]
           let imageBase64 = null
           let attempt = 0
+          let lastError = null
 
+          // Try original prompt up to MAX_RETRIES
           while (attempt <= MAX_RETRIES && !imageBase64) {
             try {
               console.log(`[generateCharacterImages] (${attempt + 1}/${MAX_RETRIES + 1}) Generating image for ${char.name}`)
@@ -257,14 +449,46 @@ ${characterListText}
                 console.warn(`[generateCharacterImages] No image data returned for ${char.name} on attempt ${attempt + 1}`)
               }
             } catch (err) {
+              lastError = err
               console.error(`[generateCharacterImages] Error on attempt ${attempt + 1} for ${char.name}:`, err.message)
             }
 
             attempt++
           }
 
+          // If image not generated and safety error occurred
+          if (!imageBase64 && lastError?.status === 400 && lastError.message?.toLowerCase().includes('safety')) {
+            console.warn(`[generateCharacterImages] Safety error detected for ${char.name}, refining prompt with GPT-4o...`)
+
+            const refinedPrompt = await this.refineCharacterPromptWithGpt(prompt)
+            if (!refinedPrompt) {
+              console.error(`[generateCharacterImages] Could not refine prompt for ${char.name}`)
+              return
+            }
+
+            try {
+              const result = await this.openai.images.generate({
+                model: 'gpt-image-1',
+                prompt: refinedPrompt
+              })
+
+              imageBase64 = result.data[0]?.b64_json
+              if (imageBase64) {
+                prompt = refinedPrompt
+                // Optionally save refined prompt
+                char.promptHistory.unshift(refinedPrompt)
+              } else {
+                console.warn(`[generateCharacterImages] Still no image data for ${char.name} after refined prompt`)
+                return
+              }
+            } catch (refineErr) {
+              console.error(`[generateCharacterImages] Refined prompt failed for ${char.name}:`, refineErr.message)
+              return
+            }
+          }
+
           if (!imageBase64) {
-            console.error(`[generateCharacterImages] Failed to generate image for ${char.name} after ${MAX_RETRIES + 1} attempts`)
+            console.error(`[generateCharacterImages] Failed to generate image for ${char.name} after all attempts`)
             return
           }
 
@@ -325,20 +549,39 @@ ${characterListText}
     }
   }
 
+  async refineScenePromptWithGpt (originalPrompt) {
+    try {
+      const chatResponse = await this.openai.chat.completions.create({
+        model: 'gpt-4o',
+        messages: [
+          {
+            role: 'system',
+            content: 'You rephrase image generation prompts to make them child-safe and compliant with OpenAI safety filters while preserving the scene’s visual meaning.'
+          },
+          {
+            role: 'user',
+            content: `Rephrase this prompt to be safe and usable for image generation:\n\n"${originalPrompt}"`
+          }
+        ],
+        temperature: 0.7
+      })
+
+      const refined = chatResponse.choices?.[0]?.message?.content?.trim()
+      return refined || null
+    } catch (err) {
+      console.error('[refinePromptWithGpt] Error:', err.message)
+      return null
+    }
+  }
+
   async generateSceneImages (scriptId, sceneIdx = null) {
     try {
       console.log(`🔍 Generating scene images for script ID: ${scriptId}`)
       const scriptDoc = await Script.findById(scriptId)
-      if (!scriptDoc || !Array.isArray(scriptDoc.script)) {
-        throw new Error('❌ Invalid script for image generation')
-      }
+      if (!scriptDoc || !Array.isArray(scriptDoc.script)) throw new Error('❌ Invalid script for image generation')
 
-      // Fetch all characters related to the script with their imageUrls
       const characterIds = scriptDoc.characterId.map(c => c._id || c)
       const characters = await Character.find({ _id: { $in: characterIds } })
-      if (characters.length === 0) {
-        console.warn('⚠️ No characters found for image references')
-      }
 
       const charFileMap = new Map()
       for (const char of characters) {
@@ -348,16 +591,12 @@ ${characterListText}
 
         try {
           const filename = `${charName.replace(/\s+/g, '_')}_${uuidv4()}.png`
-          const localPath = await this.downloadImage(imageUrl, filename) // your existing downloader
+          const localPath = await this.downloadImage(imageUrl, filename)
           const openAIFile = await toFile(fs.createReadStream(localPath), null, { type: 'image/png' })
           charFileMap.set(charName, openAIFile)
         } catch (err) {
-          console.warn(`⚠️ Failed to prepare reference image for character "${charName}":`, err.message)
+          console.warn(`⚠️ Failed to prepare image for "${charName}":`, err.message)
         }
-      }
-
-      if (charFileMap.size === 0) {
-        console.info('ℹ️ No character reference images available, will generate from text only.')
       }
 
       const scenes = scriptDoc.script
@@ -366,71 +605,86 @@ ${characterListText}
 
       for (let i = 0; i < sceneIndices.length; i += BATCH_SIZE) {
         const batchIndices = sceneIndices.slice(i, i + BATCH_SIZE)
-        console.log(`🧩 Processing batch ${i / BATCH_SIZE + 1} scenes: ${batchIndices.join(', ')}`)
+        console.log(`🧩 Processing scenes: ${batchIndices.join(', ')}`)
 
         const generated = await Promise.all(
           batchIndices.map(async (idx) => {
             const scene = scenes[idx]
-            try {
-              const sceneText = (scene.textToImagePrompt || '').toLowerCase()
-              // Find all matching character files referenced in prompt
-              const matchedCharFiles = []
-              for (const [charName, file] of charFileMap.entries()) {
-                const regex = new RegExp(`\\b${charName}\\b`, 'i')
-                if (regex.test(sceneText)) matchedCharFiles.push(file)
-              }
+            const prompt = `${scene.textToImagePrompt}, landscape format, 16:9 aspect ratio`.toLowerCase()
 
-              let rsp
-              if (matchedCharFiles.length > 0) {
-                rsp = await client.images.edit({
-                  model: 'gpt-image-1',
-                  image: matchedCharFiles[0],
-                  prompt: `${scene.textToImagePrompt}, landscape format, 16:9 aspect ratio`
-                })
-              } else {
-                rsp = await client.images.generate({
-                  model: 'gpt-image-1',
-                  prompt: `${scene.textToImagePrompt}, landscape format, 16:9 aspect ratio`
-                })
-              }
-
-              const base64Image = rsp.data[0].b64_json
-              const savedImageUrl = await helper.saveBase64ImageToGcp(base64Image, `scene_${scriptId}_${idx + 1}.png`)
-              // Save image url to file system too if needed
-              const localFileName = `${scriptId}_scene${idx + 1}.png`
-              const imageBuffer = Buffer.from(base64Image, 'base64')
-
-              if (!fs.existsSync(GENERATED_DIR)) {
-                fs.mkdirSync(GENERATED_DIR, { recursive: true })
-              }
-
-              fs.writeFileSync(path.join(GENERATED_DIR, localFileName), imageBuffer)
-              console.log(`📁 Scene ${idx + 1} image saved at ${savedImageUrl}`)
-              return { sceneIdx: idx, imageUrl: savedImageUrl }
-            } catch (err) {
-              console.error(`❌ Error generating image for scene ${idx + 1}:`, err.message)
-              return null
+            const matchedCharFiles = []
+            for (const [charName, file] of charFileMap.entries()) {
+              if (new RegExp(`\\b${charName}\\b`, 'i').test(prompt)) matchedCharFiles.push(file)
             }
+
+            const tryGenerate = async (inputPrompt) => {
+              try {
+                if (matchedCharFiles.length > 0) {
+                  return await client.images.edit({
+                    model: 'gpt-image-1',
+                    image: matchedCharFiles[0],
+                    prompt: inputPrompt
+                  })
+                } else {
+                  return await client.images.generate({
+                    model: 'gpt-image-1',
+                    prompt: inputPrompt
+                  })
+                }
+              } catch (err) {
+                if (err.status === 400 && err.message.toLowerCase().includes('safety')) {
+                  console.warn(`⚠️ Scene ${idx + 1} blocked due to safety, refining prompt...`)
+                  const refinedPrompt = await this.refineScenePromptWithGpt(inputPrompt)
+                  if (refinedPrompt) {
+                    try {
+                      return await tryGenerate(refinedPrompt)
+                    } catch (refinedErr) {
+                      console.error(`❌ Refined prompt also failed for scene ${idx + 1}:`, refinedErr.message)
+                      return null
+                    }
+                  } else {
+                    console.warn(`⚠️ No refined prompt returned for scene ${idx + 1}`)
+                    return null
+                  }
+                } else {
+                  console.error(`❌ Scene ${idx + 1} error:`, err.message)
+                  return null
+                }
+              }
+            }
+
+            const rsp = await tryGenerate(prompt)
+            if (!rsp?.data?.[0]?.b64_json) return null
+
+            const base64Image = rsp.data[0].b64_json
+            const savedImageUrl = await helper.saveBase64ImageToGcp(base64Image, `scene_${scriptId}_${idx + 1}.png`)
+            const imageBuffer = Buffer.from(base64Image, 'base64')
+            const localFileName = `${scriptId}_scene${idx + 1}.png`
+
+            if (!fs.existsSync(GENERATED_DIR)) fs.mkdirSync(GENERATED_DIR, { recursive: true })
+            fs.writeFileSync(path.join(GENERATED_DIR, localFileName), imageBuffer)
+
+            console.log(`📁 Scene ${idx + 1} saved: ${savedImageUrl}`)
+            return { sceneIdx: idx, imageUrl: savedImageUrl }
           })
         )
 
         for (const result of generated) {
-          if (result && result.imageUrl) {
+          if (result?.imageUrl) {
             scriptDoc.script[result.sceneIdx].imageUrl = result.imageUrl
           }
         }
 
         scriptDoc.markModified('script')
         await scriptDoc.save()
-        console.log(`💾 Script updated with images after batch ${i / BATCH_SIZE + 1}`)
+        console.log(`💾 Updated script after batch ${i / BATCH_SIZE + 1}`)
       }
 
-      // Cleanup temporary files if any
       for (const file of fs.readdirSync(TEMP_DIR)) {
         fs.unlinkSync(path.join(TEMP_DIR, file))
       }
 
-      console.log(`✅ Completed scene image generation for script ID: ${scriptId}`)
+      console.log(`✅ All scene images generated for script ID: ${scriptId}`)
     } catch (error) {
       console.error('❌ generateSceneImages error:', error.message)
     }
@@ -486,17 +740,59 @@ ${characterListText}
     }
   }
 
+  async refineVideoPrompt (originalPrompt) {
+    const sensitiveWords = ['sexy', 'naked', 'hot', 'revealing', 'provocative', 'lingerie']
+    let refinedPrompt = originalPrompt
+
+    for (const word of sensitiveWords) {
+      const regex = new RegExp(`\\b${word}\\b`, 'gi')
+      refinedPrompt = refinedPrompt.replace(regex, '')
+    }
+
+    refinedPrompt = refinedPrompt.replace(/a photo of/i, 'an illustration of').trim()
+    refinedPrompt += ' in a child-friendly 3D Pixar animated style'
+
+    console.log('🧼 Refined Prompt:', refinedPrompt)
+    return refinedPrompt
+  }
+
   async generateVideoFromImage (options) {
-    const MAX_RETRIES = 2
+    const MAX_RETRIES = 4
     let attempt = 0
     let finalUrl = null
+    let currentPrompt = options.prompt
+
+    const videosFolder = path.join(process.cwd(), 'Videos')
+    if (!fs.existsSync(videosFolder)) {
+      fs.mkdirSync(videosFolder)
+    }
+
+    const sceneIndexFile = path.join(videosFolder, 'scene_index.txt')
+    if (!fs.existsSync(sceneIndexFile)) {
+      fs.writeFileSync(sceneIndexFile, '0', 'utf8')
+    }
+
+    function getNextSceneIndexSync () {
+      const fd = fs.openSync(sceneIndexFile, 'r+')
+      const buf = Buffer.alloc(10)
+      fs.readSync(fd, buf, 0, 10, 0)
+      const current = parseInt(buf.toString().trim(), 10) || 0
+      const next = current + 1
+      fs.ftruncateSync(fd, 0)
+      fs.writeSync(fd, next.toString(), 0, 'utf8')
+      fs.closeSync(fd)
+      return next
+    }
+
+    const sceneIndex = getNextSceneIndexSync()
+    const localFilePath = path.join(videosFolder, `scene${sceneIndex}.mp4`)
 
     while (attempt <= MAX_RETRIES && !finalUrl) {
       try {
-        console.log(`🚧 Attempt ${attempt + 1}/${MAX_RETRIES + 1} - generateVideoFromImage with:`, options)
+        console.log(`🚧 Attempt ${attempt + 1}/${MAX_RETRIES + 1} - generateVideoFromImage with:`, currentPrompt)
 
         const input = {
-          prompt: options.prompt,
+          prompt: currentPrompt,
           duration: 10,
           cfg_scale: 0.5,
           start_image: options.imageUrl,
@@ -516,11 +812,20 @@ ${characterListText}
         const fileBuffer = res.data
         const mimeType = mime.lookup(replicateVideoUrl) || 'video/mp4'
 
-        finalUrl = await helper.uploadImageToGCP(fileBuffer, options.name, mimeType)
+        fs.writeFileSync(localFilePath, fileBuffer)
+        console.log(`💾 Saved locally at ${localFilePath}`)
 
+        finalUrl = await helper.uploadImageToGCP(fileBuffer, options.name || `scene${sceneIndex}`, mimeType)
         console.log('✅ Final ImageKit video URL:', finalUrl)
+        return finalUrl
       } catch (error) {
-        console.error(`🔥 Error in generateVideoFromImage (attempt ${attempt + 1}):`, error.response?.data || error.message)
+        const errorMsg = error.response?.data || error.message
+        console.error(`🔥 Error in generateVideoFromImage (attempt ${attempt + 1}):`, errorMsg)
+
+        if (errorMsg.toString().toLowerCase().includes('sensitive') && attempt < MAX_RETRIES) {
+          console.log('🛡️ Prompt flagged as sensitive. Refining...')
+          currentPrompt = await this.refineVideoPrompt(currentPrompt)
+        }
       }
 
       attempt++
@@ -529,130 +834,131 @@ ${characterListText}
     if (!finalUrl) {
       throw new Error(`Failed to generate video after ${MAX_RETRIES + 1} attempts`)
     }
-
-    return finalUrl
   }
 
-  async getAllCharacters (characterName, category, pageNumber, pageLimit, user) {
-    try {
-      // Calculate the number of documents to skip
-      const limit = pageLimit || 6
-      const page = pageNumber || 1
-      const skip = (page - 1) * limit
+  async trimAndMux ({ totalClips = 15, fadeTime = 0.5 }) {
+    const baseDir = path.resolve(__dirname)
+    const audiosDir = path.resolve(__dirname, '../../Audios')
+    const videosDir = path.resolve(__dirname, '../../Videos')
+    const outputDir = path.resolve(__dirname, '../../Output')
+    if (!fs.existsSync(outputDir)) fs.mkdirSync(outputDir)
 
-      // Create the query object with user ID and status (if applicable)
-      const query = {
-        userId: mongoose.Types.ObjectId(user.id)
-      }
+    const narrationDir = path.resolve(__dirname, './narrations')
 
-      // Add search functionality if a character name is provided
-      if (characterName) {
-        query.name = { $regex: characterName, $options: 'i' }
-      }
-      // Fetch the characters with pagination
-      const characters = await Character.find(query)
-        .sort({ updatedAt: -1, _id: -1 })
-        .skip(skip)
-        .limit(limit)
+    console.log(`[Init] Base Dir: ${baseDir}`)
+    console.log(`[Init] Audios Dir: ${audiosDir}`)
+    console.log(`[Init] Videos Dir: ${videosDir}`)
+    console.log(`[Init] Output Dir: ${outputDir}`)
+    console.log(`[Init] Narration Dir: ${narrationDir}`)
 
-      // Get the current page count of Characters
-      const currentPageCharacterCount = characters.length
-
-      // Optional: Get the total count of characters for pagination info
-      const totalCharacters = await Character.countDocuments(query)
-
-      return {
-        characters,
-        totalCharacters,
-        currentPage: page,
-        totalPages: Math.ceil(totalCharacters / limit),
-        currentPageCharacterCount
-      }
-    } catch (err) {
-      console.log('Error in getAllCharacters function :: ', err)
-      throw new Error(err)
+    const narrationFiles = fs.readdirSync(narrationDir).filter(f =>
+      f.startsWith('narration_') && f.endsWith('.txt')
+    )
+    if (narrationFiles.length !== 1) {
+      throw new Error(`Expected exactly one narration file, found ${narrationFiles.length}`)
     }
-  }
 
-  async getCharacterById (id, user) {
-    const characterHistory = []
+    const narrationPath = path.join(narrationDir, narrationFiles[0])
+    const narrationLines = fs.readFileSync(narrationPath, 'utf8')
+      .split('\n')
+      .map(line => line.trim())
+      .filter(line => line.length > 0)
 
-    try {
-      const ifCharacter = await Character.findOne({ userId: user.id, _id: id })
-      console.log('Fetching character with id:', id) // Log the id
-      if (ifCharacter) {
-        const character = await Character.findById(id)
-
-        if (!character) {
-          console.error('Character not found with id:', id) // Log when character is not found
-          throw new Error('User does not have access to this character')
-        }
-
-        if (character.imageUrl_history && character.prompt_history) {
-          for (let i = 0; i < character.imageUrl_history.length; i++) {
-            characterHistory.push({
-              image: character.imageUrl_history[i],
-              prompt: character.prompt_history[i]
-            })
-          }
-        }
-        return { character, characterHistory }
-      } else {
-        console.error('User does not have access to this character') // Log when user does not have access to the character
-        throw new Error('User does not have access to this character')
-      }
-    } catch (err) {
-      console.error('Error in getCharacterById function ::', err) // More detailed error logging
-      throw new Error(err)
+    if (narrationLines.length < totalClips) {
+      throw new Error(`Narration file has only ${narrationLines.length} lines, but ${totalClips} clips expected.`)
     }
-  }
 
-  async editCharacter (id, body, user) {
-    try {
-      const { newPrompt, userSelectedUrl } = body
-      console.log('Fetching character with id:', id)
+    const trimmedFiles = []
 
-      const character = await Character.findOne({ userId: user.id, _id: id })
+    for (let idx = 0; idx < totalClips; idx++) {
+      console.log(`\n===== Processing Clip ${idx + 1}/${totalClips} =====`)
 
-      if (!character) {
-        console.error('User does not have access to this character')
-        throw new Error('User does not have access to this character')
+      const video = path.join(videosDir, `scene${idx + 1}.mp4`)
+      const audio = path.join(audiosDir, `audio${idx + 1}.mp3`)
+      const out = path.join(outputDir, `final_clip${idx + 1}.mp4`)
+
+      await access(video)
+      await access(audio)
+
+      const durOutput = sh(`ffprobe -v error -show_entries format=duration -of default=noprint_wrappers=1:nokey=1 "${audio}"`)
+      const dur = parseFloat(durOutput)
+      if (isNaN(dur)) throw new Error(`Invalid duration for audio ${audio}`)
+
+      const subtitleText = narrationLines[idx]
+      const srtPath = path.join(baseDir, `subtitle${idx + 1}.srt`)
+      const formatTime = (seconds) => {
+        const ms = Math.floor(seconds * 1000)
+        const date = new Date(ms).toISOString().substr(11, 12).replace('.', ',')
+        return date
       }
 
-      // Build prompt
-      let prompt = newPrompt
-      if (userSelectedUrl != null) {
-        prompt += ` --cref ${userSelectedUrl}`
-      }
-      prompt += ' --ar 16:9'
+      const srtContent = `1\n00:00:00,000 --> ${formatTime(dur + 0.35)}\n${subtitleText}\n`
+      fs.writeFileSync(srtPath, srtContent, 'utf8')
 
-      // Push to history
-      if (!character.promptHistory) character.promptHistory = []
-      character.promptHistory.push(prompt)
-      await character.save()
+      const fadeIn = idx === 0 || idx === totalClips - 1
+      const fadeOut = idx === totalClips - 1 || idx === 0
 
-      // Generate image with gpt-image-1
-      const response = await this.openai.images.generate({
-        model: 'gpt-image-1',
-        prompt: character.promptHistory[0] // using the first prompt from history
-      })
-
-      const imageData = response.data[0].b64_json
-      const imageUrl = await helper.saveBase64ImageToGcp(imageData, 'character.png')
-
-      character.imageUrl = imageUrl
-      await character.save()
-
-      return imageUrl
-    } catch (err) {
-      if (err.code === 'moderation_blocked') {
-        console.error('Prompt blocked by moderation:', err.message)
-        throw new Error('Prompt rejected due to moderation')
+      let fadeEffects = ''
+      let audioFadeEffects = ''
+      if (fadeIn && fadeOut) {
+        fadeEffects = `,fade=t=in:st=0:d=${fadeTime},fade=t=out:st=${dur - fadeTime}:d=${fadeTime}`
+        audioFadeEffects = `afade=t=in:st=0:d=${fadeTime},afade=t=out:st=${dur - fadeTime}:d=${fadeTime}`
+      } else if (fadeIn) {
+        fadeEffects = `,fade=t=in:st=0:d=${fadeTime}`
+        audioFadeEffects = `afade=t=in:st=0:d=${fadeTime}`
+      } else if (fadeOut) {
+        fadeEffects = `,fade=t=out:st=${dur - fadeTime}:d=${fadeTime}`
+        audioFadeEffects = `afade=t=out:st=${dur - fadeTime}:d=${fadeTime}`
       }
 
-      console.error('Error in editCharacter function ::', err)
-      throw new Error(err.message || 'Unexpected error occurred')
+      const srtFilterPath = srtPath.replace(/\\/g, '/')
+
+      const ffArgs = [
+        '-ss', '0', '-t', (dur + 0.3).toString(), '-i', video,
+        '-i', audio,
+        '-map', '0:v', '-map', '1:a',
+        '-c:v', 'libx264', '-crf', '20', '-preset', 'fast',
+        '-c:a', 'aac', '-ac', '2',
+        '-vf', `fps=30,format=yuv420p,subtitles='${srtFilterPath}':force_style='FontName=Arial,FontSize=16,PrimaryColour=&Hffffff,OutlineColour=&H000000,BorderStyle=1,Outline=1,Shadow=0,MarginV=30'${fadeEffects}`,
+        ...(audioFadeEffects ? ['-af', audioFadeEffects] : []),
+        '-shortest', out
+      ]
+
+      const result = spawnSync('ffmpeg', ffArgs, { stdio: 'inherit' })
+      if (result.status !== 0) throw new Error(`ffmpeg failed on clip ${idx + 1}`)
+
+      trimmedFiles.push(path.resolve(out))
     }
+
+    // 🔗 Final concatenation
+    console.log('\n===== Starting Final Concatenation =====')
+    const listPath = path.join(baseDir, 'list.txt')
+    const listText = trimmedFiles.map(f => `file '${f.replace(/'/g, "'\\''")}'`).join('\n')
+    fs.writeFileSync(listPath, listText)
+
+    const concatResult = spawnSync('ffmpeg', [
+      '-y', '-f', 'concat', '-safe', '0', '-i', listPath, '-c', 'copy', 'final.mp4'
+    ], { stdio: 'inherit' })
+
+    if (concatResult.status !== 0) {
+      throw new Error(`ffmpeg failed while concatenating clips. Status: ${concatResult.status}`)
+    }
+
+    console.log('🎉 Final video created: final.mp4')
+
+    // 🧹 Cleanup
+    const tryUnlink = (f) => {
+      try { fs.unlinkSync(f) } catch (e) { }
+    }
+
+    fs.readdirSync(audiosDir).forEach(f => f.startsWith('audio') && tryUnlink(path.join(audiosDir, f)))
+    fs.readdirSync(videosDir).forEach(f => f.startsWith('scene') && tryUnlink(path.join(videosDir, f)))
+    fs.readdirSync(outputDir).forEach(f => f.startsWith('final_clip') && tryUnlink(path.join(outputDir, f)))
+    fs.readdirSync(baseDir).forEach(f => f.startsWith('subtitle') && tryUnlink(path.join(baseDir, f)))
+    tryUnlink(listPath)
+    narrationFiles.forEach(f => tryUnlink(path.join(narrationDir, f)))
+
+    console.log('✅ Cleanup completed.')
   }
 }
 
